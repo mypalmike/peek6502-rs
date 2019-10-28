@@ -62,8 +62,10 @@ impl Cpu {
         new_cpu.dispatch[0x16 as usize] = Cpu::op_asl_zpx;
         new_cpu.dispatch[0x17 as usize] = Cpu::op_slo_zpx;
         new_cpu.dispatch[0x18 as usize] = Cpu::op_clc;
-        
-
+        new_cpu.dispatch[0x19 as usize] = Cpu::op_ora_aby;
+        new_cpu.dispatch[0x1a as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0x1b as usize] = Cpu::op_slo_aby;
+        new_cpu.dispatch[0x1c as usize] = Cpu::op_nop_abx;
 
         new_cpu.dispatch[0x4c as usize] = Cpu::op_jmp_abs;
         new_cpu.dispatch[0x69 as usize] = Cpu::op_adc_imm;
@@ -104,12 +106,21 @@ impl Cpu {
         mem.get_byte(addr)
     }
 
+    fn addr_mode_abx(&mut self, mem : &mut Mem) -> u16 {
+        mem.get_word(self.pc) + self.y as u16
+    }
+
+    fn val_mode_abx(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.addr_mode_abx(mem);
+        mem.get_byte(addr)
+    }
+
     fn addr_mode_aby(&mut self, mem : &mut Mem) -> u16 {
         mem.get_word(self.pc) + self.y as u16
     }
 
     fn val_mode_aby(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_abs(mem);
+        let addr = self.addr_mode_aby(mem);
         mem.get_byte(addr)
     }
 
@@ -210,7 +221,7 @@ impl Cpu {
     fn op_php(&mut self, mem : &mut Mem) {
         self.pc += 1;
         let status = self.status();
-        self.stack_push(mem, status);
+        self.stack_push_byte(mem, status);
     }
 
     // 0x09, time 2
@@ -341,6 +352,76 @@ impl Cpu {
         self.pc += 3;
     }
 
+    // 0x1d, time 4
+    fn op_ora_abx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_abx(mem);
+        self.pc += 2;
+        self.ora(mem, val);        
+    }
+
+    // 0x1e, time 7
+    fn op_asl_abx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_abx(mem);
+        self.pc += 2;
+        self.asl_mem(mem, addr);
+    }
+
+    // 0x1f, time 7, unofficial
+    fn op_slo_abx(&mut self, mem : &mut Mem) {
+        panic!("op_slo_abx is not implemented");
+    }
+
+    // 0x20, time 6
+    fn op_jsr_abs(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_abs(mem);
+        self.pc += 2;
+        self.stack_push_word(mem, self.pc - 1);
+        self.pc = addr;
+    }
+
+    // 0x21, time 6
+    fn op_and_izx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_izx(mem);
+        self.pc += 1;
+        self.and(mem, val);
+    }
+
+    // 0x22 hlt
+
+    // 0x23, time 7, unofficial
+    fn op_rla_izx(&mut self, mem : &mut Mem) {
+        panic!("op_rla_izx is not implemented");
+    }
+
+    // 0x24, time 3
+    fn op_bit_zp(&mut self, mem : &mut Mem) {
+        //	N:=b7 V:=b6 Z:=A&{adr}
+        self.pc += 1;
+        let val = self.val_mode_zp(mem);
+        self.pc += 1;
+        self.bit(mem, val);
+    }
+
+    // 0x25, time 3
+    fn op_and_zp(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_zp(mem);
+        self.pc += 1;
+        self.and(mem, val);        
+    }
+
+    // 0x26, time 5
+    fn op_rol_zp(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_zp(mem);
+        self.pc += 2;
+        self.rol_mem(mem, addr);
+    }
+
 
 
 
@@ -405,6 +486,11 @@ impl Cpu {
 
     // Implementations of core functionality once the address has been
     // computed
+    fn and(&mut self, mem : &mut Mem, val : u8) {
+        self.a = self.a & val;
+        self.compute_nz();
+    }
+
     fn asl_mem(&mut self, mem : &mut Mem, addr: u16) {
         let val = mem.get_byte(addr);
         let new_val = self.asl_val(mem, val);
@@ -414,25 +500,61 @@ impl Cpu {
     fn asl_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
         let (new_val, overflow) = val.overflowing_shl(1);
         self.c = overflow;
+        self.compute_nz();
         new_val
+    }
+
+    //	Set flags only. n and v are set to val bits 7 and 6. z is AND of a and val
+    fn bit(&mut self, mem : &mut Mem, val: u8) {
+        self.n = val & 0x80 != 0;
+        self.v = val & 0x40 != 0;
+        self.z = val & self.a == 0;
     }
 
     fn lda(&mut self, mem : &mut Mem, val: u8) {
         self.a = val;
+        self.compute_nz();
     }
 
     fn ora(&mut self, mem : &mut Mem, val : u8) {
         self.a = self.a | val;
-    }    
+        self.compute_nz();
+    }
+
+    fn rol_mem(&mut self, mem : &mut Mem, addr: u16) {
+        let val = mem.get_byte(addr);
+        let new_val = self.rol_val(mem, val);
+        mem.set_byte(addr, new_val);
+    }
+
+    fn rol_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
+        let (new_val, overflow) = val.overflowing_shl(1);
+        let c = self.c;
+        self.c = overflow;
+        self.compute_nz();
+        new_val | if c {0x01} else {0x00}
+    }
 
     fn stx(&mut self, mem : &mut Mem, addr : u16) {
         mem.set_byte(addr, self.x);
     }
 
+    fn compute_nz(&mut self) {
+        self.n = self.a >= 0x80;
+        self.z = self.a == 0;
+    }
+
     // Stack functions
-    fn stack_push(&mut self, mem : &mut Mem, val : u8) {
+    fn stack_push_byte(&mut self, mem : &mut Mem, val : u8) {
         let addr = self.addr_stack();
         mem.set_byte(addr, val);
+        self.s -= 1;
+    }
+
+    fn stack_push_word(&mut self, mem : &mut Mem, val : u16) {
+        let addr = self.addr_stack();
+        self.s -= 1;
+        mem.set_word(addr, val);
         self.s -= 1;
     }
 

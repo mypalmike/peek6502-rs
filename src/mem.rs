@@ -27,7 +27,7 @@ impl Mem {
         new_mem
     }
 
-    pub fn get_byte(&self, addr : u16) -> u8 {
+    pub fn get_byte(&self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.rom[(addr - 0x8000) as usize]
         } else {
@@ -35,13 +35,13 @@ impl Mem {
         }
     }
 
-    pub fn get_word(&self, addr : u16) -> u16 {
+    pub fn get_word(&self, addr: u16) -> u16 {
         let addr1 = self.get_byte(addr) as u16;
         let addr2 = (self.get_byte(addr + 1) as u16) << 8;
         addr1 | addr2
     }
 
-    pub fn set_byte(&mut self, addr : u16, val : u8) {
+    pub fn set_byte(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             panic!("Can't write to ROM");
         }
@@ -49,9 +49,12 @@ impl Mem {
         self.ram[addr as usize] = val;
     }
 
-    // pub fn put_word(addr : u16, val : u16) {
-
-    // }
+    pub fn set_word(&mut self, addr: u16, val: u16) {
+        let lo_byte = (val & 0xff) as u8;
+        let hi_byte = (val >> 8) as u8;
+        self.set_byte(addr, lo_byte);
+        self.set_byte(addr + 1, hi_byte);
+    }
 }
 
 
