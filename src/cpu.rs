@@ -536,11 +536,51 @@ impl Cpu {
         self.eor(mem, val);
     }
 
-    // 0x42, time
+    // 0x42 hlt
 
+    // 0x43, time 8, unofficial
+    fn op_sre_izx(&mut self, mem : &mut Mem) {
+        panic!("op_sre_izx is not implemented");
+    }
 
+    // 0x44 op_nop_zp
 
+    // 0x45, time 3
+    fn op_eor_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.eor(mem, val);
+    }
 
+    // 0x46, time 5
+    fn op_lsr_zp(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zp(mem);
+        self.lsr_mem(mem, addr);
+    }
+
+    // 0x47, time 5
+    fn op_sre_zp(&mut self, mem : &mut Mem) {
+        panic!("op_sre_zp is not implemented");
+    }
+
+    // 0x48, time 3
+    fn op_pha(&mut self, mem : &mut Mem) {
+        self.stack_push_byte(mem, self.a);
+    }
+
+    // 0x49, time 2
+    fn op_eor_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.eor(mem, val);
+    }
+
+    // 0x4a, time 2
+    fn op_lsr(&mut self, mem : &mut Mem) {
+        let val = self.a;
+        let new_val = self.lsr_val(mem, val);
+        self.a = new_val;
+    }
+
+    // 0x4b alr_imm
 
     // 0x4c, time 3
     fn op_jmp_abs(&mut self, mem : &mut Mem) {
@@ -550,6 +590,33 @@ impl Cpu {
         // self.pc = addr;
         // println!("jmp_abs 0x{:04x}", addr);
     }
+
+    // 0x4d, time 4
+    fn op_eor_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.eor(mem, val);
+    }
+
+    // 0x4e, time 6
+    fn op_lsr_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.lsr_mem(mem, addr);
+    }
+
+    // 0x4f, time 6, unofficial
+    fn op_sre_abs(&mut self, mem : &mut Mem) {
+        panic!("op_jmp_abs is not implemented");
+    }
+
+    // 0x50, time 2+
+    fn op_bvc_rel(&mut self, mem : &mut Mem) {
+
+    }
+
+
+
+
+
 
     // 0x69, time 2
     fn op_adc_imm(&mut self, mem : &mut Mem) {
@@ -626,6 +693,17 @@ impl Cpu {
         self.compute_nz();
     }
 
+    fn lsr_mem(&mut self, mem : &mut Mem, addr: u16) {
+
+    }
+
+    fn lsr_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
+        self.c = val & 0x01 != 0;
+        val >> 1;
+        self.compute_nz_val(val);
+        val
+    }
+
     fn ora(&mut self, mem : &mut Mem, val : u8) {
         self.a = self.a | val;
         self.compute_nz();
@@ -638,11 +716,12 @@ impl Cpu {
     }
 
     fn rol_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
-        let (new_val, overflow) = val.overflowing_shl(1);
+        let (val2, overflow) = val.overflowing_shl(1);
         let c = self.c;
         self.c = overflow;
-        self.compute_nz();
-        new_val | if c {0x01} else {0x00}
+        let new_val = val2 | if c {0x01} else {0x00};
+        self.compute_nz_val(new_val);
+        new_val
     }
 
     fn stx(&mut self, mem : &mut Mem, addr : u16) {
@@ -650,8 +729,12 @@ impl Cpu {
     }
 
     fn compute_nz(&mut self) {
-        self.n = self.a >= 0x80;
-        self.z = self.a == 0;
+        self.compute_nz_val(self.a);
+    }
+
+    fn compute_nz_val(&mut self, val: u8) {
+        self.n = val >= 0x80;
+        self.z = val == 0;
     }
 
     // Stack functions
