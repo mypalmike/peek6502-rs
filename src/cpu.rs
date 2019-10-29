@@ -78,8 +78,9 @@ impl Cpu {
     }
 
     pub fn tick(&mut self, mem : &mut Mem) {
-        let opcode = mem.get_byte(self.pc);
-        println!("opcode {:02x} at {:04x}", opcode, self.pc);
+        let pc = self.pc;
+        let opcode = self.fetch_byte(mem);
+        println!("opcode {:02x} at {:04x}", opcode, pc);
 
         self.dispatch[opcode as usize](self, mem);
     }
@@ -96,70 +97,83 @@ impl Cpu {
     //     let addr = addr1 | addr2;
     // }
 
+    // Fetch from program counter
+    fn fetch_byte(&mut self, mem : &mut Mem) -> u8 {
+        let addr = mem.get_byte(self.pc);
+        self.pc += 1;
+        addr
+    }
+
+    fn fetch_word(&mut self, mem : &mut Mem) -> u16 {
+        let addr = mem.get_word(self.pc);
+        self.pc += 2;
+        addr
+    }
+
     // Addressing modes. addr_X computes the address for an operation.
-    fn addr_mode_abs(&mut self, mem : &mut Mem) -> u16 {
-        mem.get_word(self.pc)
+    fn fetch_addr_mode_abs(&mut self, mem : &mut Mem) -> u16 {
+        self.fetch_word(mem)
     }
 
-    fn val_mode_abs(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_abs(mem);
+    fn fetch_val_mode_abs(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_abs(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_abx(&mut self, mem : &mut Mem) -> u16 {
-        mem.get_word(self.pc) + self.y as u16
+    fn fetch_addr_mode_abx(&mut self, mem : &mut Mem) -> u16 {
+        self.fetch_word(mem) + self.y as u16
     }
 
-    fn val_mode_abx(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_abx(mem);
+    fn fetch_val_mode_abx(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_abx(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_aby(&mut self, mem : &mut Mem) -> u16 {
-        mem.get_word(self.pc) + self.y as u16
+    fn fetch_addr_mode_aby(&mut self, mem : &mut Mem) -> u16 {
+        self.fetch_word(mem) + self.y as u16
     }
 
-    fn val_mode_aby(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_aby(mem);
+    fn fetch_val_mode_aby(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_aby(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_zp(&mut self, mem : &mut Mem) -> u16 {
-        mem.get_byte(self.pc) as u16
+    fn fetch_addr_mode_zp(&mut self, mem : &mut Mem) -> u16 {
+        self.fetch_byte(mem) as u16
     }
 
-    fn val_mode_zp(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_zp(mem);
+    fn fetch_val_mode_zp(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_zp(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_zpx(&mut self, mem : &mut Mem) -> u16 {
-        let offset = mem.get_byte(self.pc);
+    fn fetch_addr_mode_zpx(&mut self, mem : &mut Mem) -> u16 {
+        let offset = self.fetch_byte(mem);
         self.x.wrapping_add(offset) as u16
     }
 
-    fn val_mode_zpx(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_zpx(mem);
+    fn fetch_val_mode_zpx(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_zpx(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_izx(&mut self, mem : &mut Mem) -> u16 {
-        let addr_i = mem.get_byte(self.pc) as u16 + self.x as u16;
-        mem.get_word(addr_i)
+    fn fetch_addr_mode_izx(&mut self, mem : &mut Mem) -> u16 {
+        let addr = self.fetch_byte(mem) as u16 + self.x as u16;
+        mem.get_word(addr)
     }
 
-    fn val_mode_izx(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_izx(mem);
+    fn fetch_val_mode_izx(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_izx(mem);
         mem.get_byte(addr)
     }
 
-    fn addr_mode_izy(&mut self, mem : &mut Mem) -> u16 {
-        let addr_i = mem.get_byte(self.pc) as u16 + self.y as u16;
+    fn fetch_addr_mode_izy(&mut self, mem : &mut Mem) -> u16 {
+        let addr_i = self.fetch_byte(mem) as u16 + self.y as u16;
         mem.get_word(addr_i)
     }
 
-    fn val_mode_izy(&mut self, mem : &mut Mem) -> u8 {
-        let addr = self.addr_mode_izy(mem);
+    fn fetch_val_mode_izy(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_izy(mem);
         mem.get_byte(addr)
     }
 
@@ -175,9 +189,7 @@ impl Cpu {
 
     // 0x01, time 6
     fn op_ora_izx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_izx(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_izx(mem);
         self.ora(mem, val);
     }
 
@@ -193,22 +205,18 @@ impl Cpu {
 
     // 0x04, time 3, unofficial
     fn op_nop_zp(&mut self, mem : &mut Mem) {
-        self.pc += 2;
+        self.pc += 1;
     }
 
     // 0x05, time 3
     fn op_ora_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zp(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_zp(mem);
         self.ora(mem, val);
     }
 
     // 0x06, time 5
     fn op_asl_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zp(mem);
-        self.pc += 1;
+        let addr = self.fetch_addr_mode_zp(mem);
         self.asl_mem(mem, addr);
     }
 
@@ -219,25 +227,20 @@ impl Cpu {
 
     // 0x08, time 3
     fn op_php(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         let status = self.status();
         self.stack_push_byte(mem, status);
     }
 
     // 0x09, time 2
     fn op_ora_imm(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = mem.get_byte(self.pc);
-        self.pc += 1;
+        let val = self.fetch_byte(mem);
         self.ora(mem, val);
     }
 
     // 0x0a, time 2
     fn op_asl(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         let val = self.a;
-        let new_val = self.asl_val(mem, val);
-        self.a = new_val;
+        self.a = self.asl_val(mem, val);
     }
 
     // 0x0b, time 2, unofficial
@@ -252,17 +255,13 @@ impl Cpu {
 
     // 0x0d, time 4
     fn op_ora_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_abs(mem);
-        self.pc += 2;
+        let val = self.fetch_val_mode_abs(mem);
         self.ora(mem, val);
     }
 
     // 0x0e, time 6
     fn op_asl_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_abs(mem);
-        self.pc += 2;
+        let addr = self.fetch_addr_mode_abs(mem);
         self.asl_mem(mem, addr);
     }
 
@@ -273,7 +272,7 @@ impl Cpu {
 
     // 0x10, time 2+
     fn op_bpl_rel(&mut self, mem : &mut Mem) {
-        self.pc += 1;
+        // TODO : review.
         if self.n {
             self.pc += 1;
         } else {
@@ -281,13 +280,11 @@ impl Cpu {
             self.pc = (self.pc as i16 + offset) as u16;
         }
     }
-    
+
     // 0x11, time 5+
     fn op_ora_izy(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_izy(mem);
-        self.pc += 1;
-        self.ora(mem, val);        
+        let val = self.fetch_val_mode_izy(mem);
+        self.ora(mem, val);
     }
 
     // 0x12 is hlt
@@ -299,22 +296,18 @@ impl Cpu {
 
     // 0x14, time 4, unofficial
     fn op_nop_zpx(&mut self, mem : &mut Mem) {
-        self.pc += 2;
+        self.pc += 1;
     }
 
     // 0x15, time 4
     fn op_ora_zpx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zpx(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_zpx(mem);
         self.ora(mem, val);
     }
 
     // 0x16, time 6
     fn op_asl_zpx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zpx(mem);
-        self.pc += 1;
+        let addr = self.fetch_addr_mode_zpx(mem);
         self.asl_mem(mem, addr);
     }
 
@@ -325,21 +318,17 @@ impl Cpu {
 
     // 0x18, time 2
     fn op_clc(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         self.c = false;
     }
 
     // 0x19, time 4
     fn op_ora_aby(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_aby(mem);
-        self.pc += 2;
+        let val = self.fetch_val_mode_aby(mem);
         self.ora(mem, val);
     }
 
     // 0x1a, time 2, unofficial
     fn op_nop(&mut self, mem : &mut Mem) {
-        self.pc += 1;
     }
 
     // 0x1b, time 7, unofficial
@@ -349,22 +338,18 @@ impl Cpu {
 
     // 0x1c, time 4+, unofficial
     fn op_nop_abx(&mut self, mem : &mut Mem) {
-        self.pc += 3;
+        self.pc += 2;
     }
 
     // 0x1d, time 4
     fn op_ora_abx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_abx(mem);
-        self.pc += 2;
-        self.ora(mem, val);        
+        let val = self.fetch_val_mode_abx(mem);
+        self.ora(mem, val);
     }
 
     // 0x1e, time 7
     fn op_asl_abx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_abx(mem);
-        self.pc += 2;
+        let addr = self.fetch_addr_mode_abx(mem);
         self.asl_mem(mem, addr);
     }
 
@@ -375,18 +360,14 @@ impl Cpu {
 
     // 0x20, time 6
     fn op_jsr_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_abs(mem);
-        self.pc += 2;
+        let addr = self.fetch_addr_mode_abs(mem);
         self.stack_push_word(mem, self.pc - 1);
         self.pc = addr;
     }
 
     // 0x21, time 6
     fn op_and_izx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_izx(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_izx(mem);
         self.and(mem, val);
     }
 
@@ -399,25 +380,19 @@ impl Cpu {
 
     // 0x24, time 3
     fn op_bit_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zp(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_zp(mem);
         self.bit(mem, val);
     }
 
     // 0x25, time 3
     fn op_and_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zp(mem);
-        self.pc += 1;
-        self.and(mem, val);        
+        let val = self.fetch_val_mode_zp(mem);
+        self.and(mem, val);
     }
 
     // 0x26, time 5
     fn op_rol_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zp(mem);
-        self.pc += 1;
+        let addr = self.fetch_addr_mode_zp(mem);
         self.rol_mem(mem, addr);
     }
 
@@ -428,21 +403,17 @@ impl Cpu {
 
     // 0x28, time 4
     fn op_plp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         self.p = self.stack_pop_byte(mem);
     }
 
     // 0x29, time 2
     fn op_and_imm(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = mem.get_byte(self.pc);
-        self.pc += 1;
+        let val = self.fetch_byte(mem);
         self.and(mem, val);
     }
 
     // 0x2a, time 2
     fn op_rol(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         let val = self.a;
         let new_val = self.rol_val(mem, val);
         self.a = new_val;
@@ -452,26 +423,20 @@ impl Cpu {
 
     // 0x2c, time 4
     fn op_bit_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_abs(mem);
-        self.pc += 2;
+        let val = self.fetch_val_mode_abs(mem);
         self.bit(mem, val);
     }
 
     // 0x2d, time 4
     fn op_and_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_abs(mem);
-        self.pc += 2;
-        self.and(mem, val);        
+        let val = self.fetch_val_mode_abs(mem);
+        self.and(mem, val);
     }
 
     // 0x2e, time 6
     fn op_rol_abs(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_abs(mem);
-        self.pc += 2;
-        self.rol_mem(mem, addr);        
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.rol_mem(mem, addr);
     }
 
     // 0x2f, time 6, unofficial
@@ -481,7 +446,7 @@ impl Cpu {
 
     // 0x30, time 2+
     fn op_bmi_rel(&mut self, mem : &mut Mem) {
-        self.pc += 1;
+        // TODO : Review
         if self.n {
             let offset = mem.get_byte(self.pc) as i8 as i16;
             self.pc = (self.pc as i16 + offset) as u16;
@@ -492,9 +457,7 @@ impl Cpu {
 
     // 0x31, time 5+
     fn op_and_izy(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_izy(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_izy(mem);
         self.and(mem, val);
     }
 
@@ -509,18 +472,14 @@ impl Cpu {
 
     // 0x35, time 4
     fn op_and_zpx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zpx(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_zpx(mem);
         self.and(mem, val);
     }
 
     // 0x36, time 6
     fn op_rol_zpx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zpx(mem);
-        self.pc += 1;
-        self.rol_mem(mem, addr);         
+        let addr = self.fetch_addr_mode_zpx(mem);
+        self.rol_mem(mem, addr);
     }
 
     // 0x37, time 6, unofficial
@@ -530,16 +489,13 @@ impl Cpu {
 
     // 0x38, time 2
     fn op_sec(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         self.c = true;
     }
 
     // 0x39, time 4
     fn op_and_aby(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_aby(mem);
-        self.pc += 2;
-        self.and(mem, val);        
+        let val = self.fetch_val_mode_aby(mem);
+        self.and(mem, val);
     }
 
     // 0x3a nop
@@ -553,18 +509,14 @@ impl Cpu {
 
     // 0x3d, time 4+
     fn op_and_abx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_abx(mem);
-        self.pc += 2;
-        self.and(mem, val);        
+        let val = self.fetch_val_mode_abx(mem);
+        self.and(mem, val);
     }
 
     // 0x3e, time 7
     fn op_rol_abx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_abx(mem);
-        self.pc += 2;
-        self.rol_mem(mem, addr);             
+        let addr = self.fetch_addr_mode_abx(mem);
+        self.rol_mem(mem, addr);
     }
 
     // 0x3f, time 7, unofficial
@@ -580,11 +532,11 @@ impl Cpu {
 
     // 0x41, time 6
     fn op_eor_izx(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_izx(mem);
-        self.pc += 1;
-        self.eor(mem, val);  
+        let val = self.fetch_val_mode_izx(mem);
+        self.eor(mem, val);
     }
+
+    // 0x42, time
 
 
 
@@ -594,8 +546,7 @@ impl Cpu {
     fn op_jmp_abs(&mut self, mem : &mut Mem) {
         panic!("op_jmp_abs is not implemented");
 
-        // self.pc += 1;
-        // let addr = self.addr_mode_abs(mem);
+        // let addr = self.fetch_addr_mode_abs(mem);
         // self.pc = addr;
         // println!("jmp_abs 0x{:04x}", addr);
     }
@@ -603,9 +554,7 @@ impl Cpu {
     // 0x69, time 2
     fn op_adc_imm(&mut self, mem : &mut Mem) {
         // TODO : Deal with setting, checking flags
-        self.pc += 1;
-        let val = mem.get_byte(self.pc);
-        self.pc += 1;
+        let val = self.fetch_byte(mem);
         self.a += val;
         if self.c {
             self.a += 1;
@@ -615,34 +564,27 @@ impl Cpu {
 
     // 0x86, time 3
     fn op_stx_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zp(mem);
-        self.pc += 1;
+        let addr = self.fetch_addr_mode_zp(mem);
         self.stx(mem, addr);
         println!("stx_zp {:04x} {:02x}", addr, self.x);
     }
 
     // 0xa5, time 3
     fn op_lda_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = self.val_mode_zp(mem);
-        self.pc += 1;
+        let val = self.fetch_val_mode_zp(mem);
         self.lda(mem, val);
         println!("lda_zp {:02x}", self.a);
     }
 
     // 0xa9, time 2
     fn op_lda_imm(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let val = mem.get_byte(self.pc);
-        self.pc += 1;
+        let val = self.fetch_byte(mem);
         self.lda(mem, val);
         println!("lda_imm {:02x}", self.a);
     }
 
     // 0xaa, time 2
     fn op_tax(&mut self, mem : &mut Mem) {
-        self.pc += 1;
         self.x = self.a;
         println!("tax {:02x}", self.x);
     }
@@ -676,7 +618,7 @@ impl Cpu {
 
     fn eor(&mut self, mem : &mut Mem, val: u8) {
         self.a = self.a ^ val;
-        self.compute_nz();     
+        self.compute_nz();
     }
 
     fn lda(&mut self, mem : &mut Mem, val: u8) {
