@@ -399,7 +399,6 @@ impl Cpu {
 
     // 0x24, time 3
     fn op_bit_zp(&mut self, mem : &mut Mem) {
-        //	N:=b7 V:=b6 Z:=A&{adr}
         self.pc += 1;
         let val = self.val_mode_zp(mem);
         self.pc += 1;
@@ -418,14 +417,188 @@ impl Cpu {
     fn op_rol_zp(&mut self, mem : &mut Mem) {
         self.pc += 1;
         let addr = self.addr_mode_zp(mem);
-        self.pc += 2;
+        self.pc += 1;
         self.rol_mem(mem, addr);
+    }
+
+    // 0x27, time 5, unofficial
+    fn op_rla_zp(&mut self, mem : &mut Mem) {
+         panic!("op_rla_zp is not implemented");
+    }
+
+    // 0x28, time 4
+    fn op_plp(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        self.p = self.stack_pop_byte(mem);
+    }
+
+    // 0x29, time 2
+    fn op_and_imm(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = mem.get_byte(self.pc);
+        self.pc += 1;
+        self.and(mem, val);
+    }
+
+    // 0x2a, time 2
+    fn op_rol(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.a;
+        let new_val = self.rol_val(mem, val);
+        self.a = new_val;
+    }
+
+    // 0x2b op_anc_imm (see above)
+
+    // 0x2c, time 4
+    fn op_bit_abs(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_abs(mem);
+        self.pc += 2;
+        self.bit(mem, val);
+    }
+
+    // 0x2d, time 4
+    fn op_and_abs(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_abs(mem);
+        self.pc += 2;
+        self.and(mem, val);        
+    }
+
+    // 0x2e, time 6
+    fn op_rol_abs(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_abs(mem);
+        self.pc += 2;
+        self.rol_mem(mem, addr);        
+    }
+
+    // 0x2f, time 6, unofficial
+    fn op_rla_abs(&mut self, mem : &mut Mem) {
+         panic!("op_rla_zp is not implemented");
+    }
+
+    // 0x30, time 2+
+    fn op_bmi_rel(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        if self.n {
+            let offset = mem.get_byte(self.pc) as i8 as i16;
+            self.pc = (self.pc as i16 + offset) as u16;
+        } else {
+            self.pc += 1;
+        }
+    }
+
+    // 0x31, time 5+
+    fn op_and_izy(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_izy(mem);
+        self.pc += 1;
+        self.and(mem, val);
+    }
+
+    // 0x32 hlt
+
+    // 0x33, time 8
+    fn op_rla_izy(&mut self, mem : &mut Mem) {
+        panic!("op_rla_izy is not implemented");
+    }
+
+    // 0x34 nop_zpx
+
+    // 0x35, time 4
+    fn op_and_zpx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_zpx(mem);
+        self.pc += 1;
+        self.and(mem, val);
+    }
+
+    // 0x36, time 6
+    fn op_rol_zpx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_zpx(mem);
+        self.pc += 1;
+        self.rol_mem(mem, addr);         
+    }
+
+    // 0x37, time 6, unofficial
+    fn op_rla_zpx(&mut self, mem : &mut Mem) {
+        panic!("op_rla_zpx is not implemented");
+    }
+
+    // 0x38, time 2
+    fn op_sec(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        self.c = true;
+    }
+
+    // 0x39, time 4
+    fn op_and_aby(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_aby(mem);
+        self.pc += 2;
+        self.and(mem, val);        
+    }
+
+    // 0x3a nop
+
+    // 0x3b, time 7, unofficial
+    fn op_rla_aby(&mut self, mem : &mut Mem) {
+        panic!("op_rla_aby is not implemented");
+    }
+
+    // 0x3c nop_abx
+
+    // 0x3d, time 4+
+    fn op_and_abx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_abx(mem);
+        self.pc += 2;
+        self.and(mem, val);        
+    }
+
+    // 0x3e, time 7
+    fn op_rol_abx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_abx(mem);
+        self.pc += 2;
+        self.rol_mem(mem, addr);             
+    }
+
+    // 0x3f, time 7, unofficial
+    fn op_rla_abx(&mut self, mem : &mut Mem) {
+        panic!("op_rla_aby is not implemented");
+    }
+
+    // 0x40, time 6
+    fn op_rti(&mut self, mem : &mut Mem) {
+        // TODO
+        panic!("op_rti is not implemented");
+    }
+
+    // 0x41, time 6
+    fn op_eor_izx(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let val = self.val_mode_izx(mem);
+        self.pc += 1;
+        self.eor(mem, val);  
     }
 
 
 
 
 
+    // 0x4c, time 3
+    fn op_jmp_abs(&mut self, mem : &mut Mem) {
+        panic!("op_jmp_abs is not implemented");
+
+        // self.pc += 1;
+        // let addr = self.addr_mode_abs(mem);
+        // self.pc = addr;
+        // println!("jmp_abs 0x{:04x}", addr);
+    }
 
     // 0x69, time 2
     fn op_adc_imm(&mut self, mem : &mut Mem) {
@@ -438,6 +611,15 @@ impl Cpu {
             self.a += 1;
         }
         println!("adc_imm {:02x} -> {:02x}", val, self.a);
+    }
+
+    // 0x86, time 3
+    fn op_stx_zp(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+        let addr = self.addr_mode_zp(mem);
+        self.pc += 1;
+        self.stx(mem, addr);
+        println!("stx_zp {:04x} {:02x}", addr, self.x);
     }
 
     // 0xa5, time 3
@@ -465,25 +647,6 @@ impl Cpu {
         println!("tax {:02x}", self.x);
     }
 
-    // 0x86, time 3
-    fn op_stx_zp(&mut self, mem : &mut Mem) {
-        self.pc += 1;
-        let addr = self.addr_mode_zp(mem);
-        self.pc += 1;
-        self.stx(mem, addr);
-        println!("stx_zp {:04x} {:02x}", addr, self.x);
-    }
-
-    // 0x4c, time 3
-    fn op_jmp_abs(&mut self, mem : &mut Mem) {
-        panic!("op_jmp_abs is not implemented");
-
-        // self.pc += 1;
-        // let addr = self.addr_mode_abs(mem);
-        // self.pc = addr;
-        // println!("jmp_abs 0x{:04x}", addr);
-    }
-
     // Implementations of core functionality once the address has been
     // computed
     fn and(&mut self, mem : &mut Mem, val : u8) {
@@ -509,6 +672,11 @@ impl Cpu {
         self.n = val & 0x80 != 0;
         self.v = val & 0x40 != 0;
         self.z = val & self.a == 0;
+    }
+
+    fn eor(&mut self, mem : &mut Mem, val: u8) {
+        self.a = self.a ^ val;
+        self.compute_nz();     
     }
 
     fn lda(&mut self, mem : &mut Mem, val: u8) {
@@ -551,11 +719,25 @@ impl Cpu {
         self.s -= 1;
     }
 
+    fn stack_pop_byte(&mut self, mem : &mut Mem) -> u8 {
+        self.s += 1;
+        let addr = self.addr_stack();
+        mem.get_byte(addr)
+    }
+
     fn stack_push_word(&mut self, mem : &mut Mem, val : u16) {
         let addr = self.addr_stack();
         self.s -= 1;
         mem.set_word(addr, val);
         self.s -= 1;
+    }
+
+    fn stack_pop_word(&mut self, mem : &mut Mem) -> u16 {
+        self.s += 1;
+        let addr = self.addr_stack();
+        let val = mem.get_word(addr);
+        self.s += 1;
+        val
     }
 
     // fn jmp_abs(&mut self, mem : &mut Mem) {
