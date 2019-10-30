@@ -913,6 +913,7 @@ impl Cpu {
     // 0x8a, time 2
     fn op_txa(&mut self, mem : &mut Mem) {
         self.a = self.x;
+        self.compute_nz_val(self.a);
     }
 
     // 0x8b, time 2, unofficial
@@ -988,6 +989,7 @@ impl Cpu {
     // 0x98, time 2
     fn op_tya(&mut self, mem : &mut Mem) {
         self.a = self.y;
+        self.compute_nz_val(self.a);
     }
 
     // 0x99, time 5
@@ -999,6 +1001,7 @@ impl Cpu {
     // 0x9a, time 2
     fn op_txs(&mut self, mem : &mut Mem) {
         self.s = self.y;
+        self.compute_nz_val(self.s);
     }
 
     // 0x9b, time 5
@@ -1027,21 +1030,57 @@ impl Cpu {
         panic!("op_ahx_aby is not implemented");
     }
 
+    // 0xa0, time 2
+    fn op_ldy_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.ldy(mem, val);
+    }
 
+    // 0xa1, time 6
+    fn op_lda_izx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izx(mem);
+        self.lda(mem, val);
+    }
 
+    // 0xa2, time 2
+    fn op_ldx_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.ldx(mem, val);
+    }
 
+    // 0xa3, time 6, unofficial
+    fn op_lax_izx(&mut self, mem : &mut Mem) {
+        panic!("op_lax_izx is not implemented");
+    }
 
-
-
-
-
-
+    // 0xa4, time 3
+    fn op_ldy_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.ldy(mem, val);
+    }
 
     // 0xa5, time 3
     fn op_lda_zp(&mut self, mem : &mut Mem) {
         let val = self.fetch_val_mode_zp(mem);
         self.lda(mem, val);
         println!("lda_zp {:02x}", self.a);
+    }
+
+    // 0xa6, time 3
+    fn op_ldx_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.ldx(mem, val);
+    }
+
+    // 0xa7, time 3
+    fn op_lax_zp(&mut self, mem : &mut Mem) {
+        panic!("op_lax_zp is not implemented");
+    }
+
+    // 0xa8, time 2
+    fn op_tay(&mut self, mem : &mut Mem) {
+        self.y = self.a;
+        self.compute_nz_val(self.y);
     }
 
     // 0xa9, time 2
@@ -1054,8 +1093,15 @@ impl Cpu {
     // 0xaa, time 2
     fn op_tax(&mut self, mem : &mut Mem) {
         self.x = self.a;
+        self.compute_nz_val(self.x);
         println!("tax {:02x}", self.x);
     }
+
+
+
+
+
+
 
     // Implementations of core functionality once the address has been
     // computed
@@ -1129,6 +1175,16 @@ impl Cpu {
 
     fn lda(&mut self, mem : &mut Mem, val: u8) {
         self.a = val;
+        self.compute_nz();
+    }
+
+    fn ldx(&mut self, mem : &mut Mem, val: u8) {
+        self.x = val;
+        self.compute_nz();
+    }
+
+    fn ldy(&mut self, mem : &mut Mem, val: u8) {
+        self.y = val;
         self.compute_nz();
     }
 
