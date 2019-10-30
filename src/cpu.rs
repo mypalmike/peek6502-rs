@@ -854,10 +854,32 @@ impl Cpu {
         panic!("op_rra_abx is not implemented");
     }
 
+    // 0x80 nop_imm
 
+    // 0x81, time 6
+    fn op_sta_izx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abx(mem);
+        self.sta(mem, addr);
+    }
 
+    // 0x82 nop_imm
 
+    // 0x83
+    fn op_sax_izx(&mut self, mem : &mut Mem) {
+        panic!("op_rra_abx is not implemented");
+    }
 
+    // 0x84, time 3
+    fn op_sty_zp(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zp(mem);
+        self.sty(mem, addr);
+    }
+
+    // 0x85, time 3
+    fn op_sta_zp(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zp(mem);
+        self.sta(mem, addr);
+    }
 
     // 0x86, time 3
     fn op_stx_zp(&mut self, mem : &mut Mem) {
@@ -865,6 +887,72 @@ impl Cpu {
         self.stx(mem, addr);
         println!("stx_zp {:04x} {:02x}", addr, self.x);
     }
+
+    // 0x87, time 3
+    fn op_sax_zp(&mut self, mem : &mut Mem) {
+        panic!("op_sax_zp is not implemented");
+    }
+
+    // 0x88, time 2
+    fn op_dey(&mut self, mem : &mut Mem) {
+        self.y -= 1;
+    }
+
+    // 0x89 nop_imm
+
+    // 0x8a, time 2
+    fn op_txa(&mut self, mem : &mut Mem) {
+        self.a = self.x;
+    }
+
+    // 0x8b, time 2, unofficial
+    fn op_xaa_imm(&mut self, mem : &mut Mem) {
+        panic!("op_xaa_imm is not implemented");
+    }
+
+    // 0x8c, time 4
+    fn op_sty_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.sty(mem, addr);
+    }
+
+    // 0x8d, time 4
+    fn op_sta_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.sta(mem, addr);
+    }
+
+    // 0x8e, time 4
+    fn op_stx_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.stx(mem, addr);
+    }
+
+    // 0x8f, time 4, unofficial
+    fn op_sax_abs(&mut self, mem : &mut Mem) {
+        panic!("op_sax_abs is not implemented");
+    }
+
+    // 0x90, time 2+
+    fn op_bcc_rel(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_rel(mem);
+        self.bcc(mem, addr);
+    }
+
+    // 0x91, time 6
+    fn op_sta_izy(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_izy(mem);
+        self.sta(mem, addr);
+    }
+
+
+
+
+
+
+
+
+
 
     // 0xa5, time 3
     fn op_lda_zp(&mut self, mem : &mut Mem) {
@@ -914,6 +1002,18 @@ impl Cpu {
         self.c = overflow;
         self.compute_nz();
         new_val
+    }
+
+    fn bcs(&mut self, mem : &mut Mem, addr: u16) {
+        if self.c {
+            self.pc = addr;
+        }
+    }
+
+    fn bcc(&mut self, mem : &mut Mem, addr: u16) {
+        if !self.c {
+            self.pc = addr;
+        }
     }
 
     fn bvc(&mut self, mem : &mut Mem, addr: u16) {
@@ -998,8 +1098,16 @@ impl Cpu {
         new_val
     }
 
+    fn sta(&mut self, mem : &mut Mem, addr : u16) {
+        mem.set_byte(addr, self.a);
+    }
+
     fn stx(&mut self, mem : &mut Mem, addr : u16) {
         mem.set_byte(addr, self.x);
+    }
+
+    fn sty(&mut self, mem : &mut Mem, addr : u16) {
+        mem.set_byte(addr, self.y);
     }
 
     fn compute_nz(&mut self) {
