@@ -157,6 +157,16 @@ impl Cpu {
         mem.get_byte(addr)
     }
 
+    fn fetch_addr_mode_zpy(&mut self, mem : &mut Mem) -> u16 {
+        let offset = self.fetch_byte(mem);
+        self.y.wrapping_add(offset) as u16
+    }
+
+    fn fetch_val_mode_zpy(&mut self, mem : &mut Mem) -> u8 {
+        let addr = self.fetch_addr_mode_zpy(mem);
+        mem.get_byte(addr)
+    }
+
     fn fetch_addr_mode_izx(&mut self, mem : &mut Mem) -> u16 {
         let addr = self.fetch_byte(mem) as u16 + self.x as u16;
         mem.get_word(addr)
@@ -944,6 +954,79 @@ impl Cpu {
         let addr = self.fetch_addr_mode_izy(mem);
         self.sta(mem, addr);
     }
+
+    // 0x92 hlt
+
+    // 0x93, time 6
+    fn op_ahx_izy(&mut self, mem : &mut Mem) {
+        panic!("op_ahx_izy is not implemented");
+    }
+
+    // 0x94, time 4
+    fn op_sty_zpx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zpx(mem);
+        self.sty(mem, addr);
+    }
+
+    // 0x95, time 4
+    fn op_sta_zpx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zpx(mem);
+        self.sta(mem, addr);
+    }
+
+    // 0x96, time 4
+    fn op_stx_zpy(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zpy(mem);
+        self.stx(mem, addr);
+    }
+
+    // 0x97, time 4, unofficial
+    fn op_sax_zpy(&mut self, mem : &mut Mem) {
+        panic!("op_ahx_izy is not implemented");
+    }
+
+    // 0x98, time 2
+    fn op_tya(&mut self, mem : &mut Mem) {
+        self.a = self.y;
+    }
+
+    // 0x99, time 5
+    fn op_sta_aby(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_aby(mem);
+        self.sta(mem, addr);
+    }
+
+    // 0x9a, time 2
+    fn op_txs(&mut self, mem : &mut Mem) {
+        self.s = self.y;
+    }
+
+    // 0x9b, time 5
+    fn op_tas_aby(&mut self, mem : &mut Mem) {
+        panic!("op_tas_aby is not implemented");
+    }
+
+    // 0x9c, time 5
+    fn op_shy_abx(&mut self, mem : &mut Mem) {
+        panic!("op_shy_abx is not implemented");
+    }
+
+    // 0x9d, time 5
+    fn op_sta_abx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abx(mem);
+        self.sta(mem, addr);
+    }
+
+    // 0x9e, time 5
+    fn op_shx_aby(&mut self, mem : &mut Mem) {
+        panic!("op_shx_aby is not implemented");
+    }
+
+    // 0x9f, time 5
+    fn op_ahx_aby(&mut self, mem : &mut Mem) {
+        panic!("op_ahx_aby is not implemented");
+    }
+
 
 
 
