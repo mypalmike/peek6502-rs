@@ -1097,6 +1097,124 @@ impl Cpu {
         println!("tax {:02x}", self.x);
     }
 
+    // 0xab, time 2, unofficial
+    fn op_lax_imm(&mut self, mem : &mut Mem) {
+        panic!("op_lax_imm is not implemented");
+    }
+
+    // 0xac, time 4
+    fn op_ldy_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.ldy(mem, val);
+    }
+
+    // 0xad, time 4
+    fn op_lda_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.lda(mem, val);
+    }
+
+    // 0xae, time 4
+    fn op_ldx_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.ldx(mem, val);
+    }
+
+    // 0xaf, time 4
+    fn op_lax_abs(&mut self, mem : &mut Mem) {
+        panic!("op_lax_imm is not implemented");
+    }
+
+    // 0xb0, time 2
+    fn op_bcs_rel(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_rel(mem);
+        self.bcs(mem, addr);
+    }
+
+    // 0xb1, time 5
+    fn op_lda_izy(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izy(mem);
+        self.lda(mem, val);
+    }
+
+    // 0xb2 hlt
+
+    // 0xb3, time 5+, unofficial
+    fn op_lax_izy(&mut self, mem : &mut Mem) {
+        panic!("op_lax_imm is not implemented");
+    }
+
+    // 0xb4, time 4
+    fn op_ldy_zpx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zpx(mem);
+        self.ldy(mem, val);
+    }
+
+    // 0xb5, time 4
+    fn op_lda_zpx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zpx(mem);
+        self.lda(mem, val);
+    }
+
+    // 0xb6, time 4
+    fn op_ldx_zpy(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zpy(mem);
+        self.ldx(mem, val);
+    }
+
+    // 0xb7, time 4
+    fn op_lax_zpy(&mut self, mem : &mut Mem) {
+        panic!("op_lax_imm is not implemented");
+    }
+
+    // 0xb8, time 2
+    fn op_clv(&mut self, mem : &mut Mem) {
+        self.v = false;
+    }
+
+    // 0xb9, time 4+
+    fn op_lda_aby(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_aby(mem);
+        self.lda(mem, val);
+    }
+
+    // 0xba, time 2
+    fn op_tsx(&mut self, mem : &mut Mem) {
+        self.x = self.s;
+        self.compute_nz_val(self.x);
+    }
+
+    // 0xbb, time 4+, unofficial
+    fn op_las_aby(&mut self, mem : &mut Mem) {
+        panic!("op_las_aby is not implemented");
+    }
+
+    // 0xbc, time 4+
+    fn op_ldy_abx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abx(mem);
+        self.ldy(mem, val);
+    }
+
+    // 0xbd, time 4+
+    fn op_lda_abx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abx(mem);
+        self.lda(mem, val);
+    }
+
+    // 0xbe, time 4+
+    fn op_ldx_aby(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_aby(mem);
+        self.ldx(mem, val);
+    }
+
+    // 0xbf, time 4+, unofficial
+    fn op_lax_aby(&mut self, mem : &mut Mem) {
+        panic!("op_lax_aby is not implemented");
+    }
+
+    //
+
+
 
 
 
