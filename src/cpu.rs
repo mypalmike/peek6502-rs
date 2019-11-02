@@ -1212,24 +1212,349 @@ impl Cpu {
         panic!("op_lax_aby is not implemented");
     }
 
-    //
+    // 0xc0, time 2
+    fn op_cpy_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.cmp(mem, self.y, val);
+    }
 
+    // 0xc1, time 6
+    fn op_cmp_izx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izx(mem);
+        self.cmp(mem, self.a, val);
+    }
 
+    // 0xc2 nop_imm
 
+    // 0xc3, time 8, unofficial
+    fn op_dcp_izx(&mut self, mem : &mut Mem) {
+        panic!("op_lax_aby is not implemented");
+    }
 
+    // 0xc4, time 3
+    fn op_cpy_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.cmp(mem, self.y, val);
+    }
 
+    // 0xc5, time 3
+    fn op_cmp_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.cmp(mem, self.a, val);
+    }
 
+    // 0xc6, time 5
+    fn op_dec_zp(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zp(mem);
+        self.dec(mem, addr);
+    }
 
+    // 0xc7, time 5, unofficial
+    fn op_dcp_zp(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_zp is not implemented");
+    }
+
+    // 0xc8, time 2
+    fn op_iny(&mut self, mem : &mut Mem) {
+        self.y = self.y.wrapping_add(1);
+        self.compute_nz_val(self.y);
+    }
+
+    // 0xc9, time 2
+    fn op_cmp_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xca, time 2
+    fn op_dex(&mut self, mem : &mut Mem) {
+        self.x = self.x.wrapping_add(0xff);
+        self.compute_nz_val(self.x);
+    }
+
+    // 0xcb, time 2, unofficial
+    fn op_axs_imm(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_zp is not implemented");
+    }
+
+    // 0xcc, time 4
+    fn op_cpy_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.cmp(mem, self.y, val);
+    }
+
+    // 0xcd, time 4
+    fn op_cmp_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xce, time 6
+    fn op_dec_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.dec(mem, addr);
+    }
+
+    // 0xcf, time 6
+    fn op_dcp_abs(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_abs is not implemented");
+    }
+
+    // 0xd0, time 2+
+    fn op_bne_rel(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_rel(mem);
+        self.bne(mem, addr);
+    }
+
+    // 0xd1, time 5+
+    fn op_cmp_izy(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izy(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xd2 hlt
+
+    // 0xd3, time 8
+    fn op_dcp_izy(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_izy is not implemented");
+    }
+
+    // 0xd4 nop_zpx
+
+    // 0xd5, time 4
+    fn op_cmp_zpx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zpx(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xd6, time 6
+    fn op_dec_zpx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zpx(mem);
+        self.dec(mem, addr);
+    }
+
+    // 0xd7, time 6
+    fn op_dcp_zpx(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_izy is not implemented");
+    }
+
+    // 0xd8, time 2
+    fn op_cld(&mut self, mem : &mut Mem) {
+        self.d = false;
+    }
+
+    // 0xd9, time 4+
+    fn op_cmp_aby(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_aby(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xda nop
+
+    // 0xdb, time 7
+    fn op_dcp_aby(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_aby is not implemented");
+    }
+
+    // 0xdc nop_abx
+
+    // 0xdd, time 4
+    fn op_cmp_abx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abx(mem);
+        self.cmp(mem, self.a, val);
+    }
+
+    // 0xde, time 7
+    fn op_dec_abx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abx(mem);
+        self.dec(mem, addr);
+    }
+
+    // 0xdf, time 7
+    fn op_dcp_abx(&mut self, mem : &mut Mem) {
+        panic!("op_dcp_abx is not implemented");
+    }
+
+    // 0xe0, time 2
+    fn op_cpx_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.cmp(mem, self.x, val);
+    }
+
+    // 0xe1, time 6
+    fn op_sbc_izx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izx(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xe2 nop_imm
+
+    // 0xe3, time 8
+    fn op_isc_izx(&mut self, mem : &mut Mem) {
+        panic!("op_isc_izx is not implemented");
+    }
+
+    // 0xe4, time 3
+    fn op_cpx_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.cmp(mem, self.x, val);
+    }
+
+    // 0xe5, time 3
+    fn op_sbc_zp(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zp(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xe6, time 5
+    fn op_inc(&mut self, mem : &mut Mem) {
+        self.a = self.a.wrapping_add(1);
+        self.compute_nz_val(self.a);
+    }
+
+    // 0xe7, time 5
+    fn op_isc_zp(&mut self, mem : &mut Mem) {
+        panic!("op_isc_zp is not implemented");
+    }
+
+    // 0xe8, time 2
+    fn op_inx(&mut self, mem : &mut Mem) {
+        self.x = self.x.wrapping_add(1);
+        self.compute_nz_val(self.x);
+    }
+
+    // 0xe9, time 2
+    fn op_sbc_imm(&mut self, mem : &mut Mem) {
+        let val = self.fetch_byte(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xea nop, official
+
+    // 0xeb sbc_imm, unofficial
+
+    // 0xec, time 4
+    fn op_cpx_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.cmp(mem, self.x, val);
+    }
+
+    // 0xed, time 4
+    fn op_sbc_abs(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abs(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xee, time 6
+    fn op_inc_abs(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.inc(mem, addr);
+    }
+
+    // 0xef, time 6
+    fn op_isc_abs(&mut self, mem : &mut Mem) {
+        panic!("op_isc_abs is not implemented");
+    }
+
+    // 0xf0, time 2+
+    fn op_beq_rel(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_rel(mem);
+        self.beq(mem, addr);
+    }
+
+    // 0xf1, time 5+
+    fn op_sbc_izy(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_izy(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xf2 hlt
+
+    // 0xf3, time 8
+    fn op_isc_izy(&mut self, mem : &mut Mem) {
+        panic!("op_isc_izy is not implemented");
+    }
+
+    // 0xf4 nop_zpx
+
+    // 0xf5, time 4
+    fn op_sbc_zpx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_zpx(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xf6, time 6
+    fn op_inc_zpx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zpx(mem);
+        self.inc(mem, addr);
+    }
+
+    // 0xf7, time 6
+    fn op_isc_zpx(&mut self, mem : &mut Mem) {
+        panic!("op_isc_izy is not implemented");
+    }
+
+    // 0xf8, time 2
+    fn op_sed(&mut self, mem : &mut Mem) {
+        self.d = true;
+    }
+
+    // 0xf9, time 4+
+    fn op_sbc_aby(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_aby(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xfa nop
+
+    // 0xfb, time 7
+    fn op_isc_aby(&mut self, mem : &mut Mem) {
+        panic!("op_isc_aby is not implemented");
+    }
+
+    // 0xfc nop_abx
+
+    // 0xfd, time 4+
+    fn op_sbc_abx(&mut self, mem : &mut Mem) {
+        let val = self.fetch_val_mode_abx(mem);
+        self.sbc(mem, val);
+    }
+
+    // 0xfe, time 7
+    fn op_inc_abx(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_abx(mem);
+        self.inc(mem, addr);
+    }
+
+    // 0xff, time 7
+    fn op_isc_abx(&mut self, mem : &mut Mem) {
+        panic!("op_isc_abx is not implemented");
+    }
 
     // Implementations of core functionality once the address has been
     // computed
     fn adc(&mut self, mem : &mut Mem, val : u8) {
         // TODO : Verify this
-        // TODO : Deal with BCD
-        self.a += val;
+        // TODO : Deal with BCD mode
+
+        // Add numbers twice: once in signed, the other unsigned. This gets us
+        // the v and c flags.
+        let (mut u_sum, mut u_overflow) = self.a.overflowing_add(val);
+        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
+
         if self.c {
-            self.a += 1;
+            let(u_sumc, u_overflowc) = u_sum.overflowing_add(1);
+            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
+
+            u_sum = u_sumc;
+            u_overflow = u_overflow || u_overflowc;
+            s_overflow = s_overflow || s_overflowc;
         }
+
+        self.c = u_overflow;
+        self.v = s_overflow;
+        self.a = u_sum;
+
         self.compute_nz();
     }
 
@@ -1263,6 +1588,20 @@ impl Cpu {
         }
     }
 
+    fn beq(&mut self, mem : &mut Mem, addr: u16) {
+        // TODO : verify this is what beq means
+        if self.z {
+            self.pc = addr;
+        }
+    }
+
+    fn bne(&mut self, mem : &mut Mem, addr: u16) {
+        // TODO : verify this is what bne means
+        if !self.z {
+            self.pc = addr;
+        }
+    }
+
     fn bvc(&mut self, mem : &mut Mem, addr: u16) {
         if !self.v {
             self.pc = addr;
@@ -1282,9 +1621,29 @@ impl Cpu {
         self.z = val & self.a == 0;
     }
 
+    fn cmp(&mut self, mem : &mut Mem, val1: u8, val2: u8) {
+        let (delta, overflow) = val1.overflowing_sub(val2);
+        self.c = overflow;
+        self.compute_nz_val(delta)
+    }
+
+    fn dec(&mut self, mem : &mut Mem, addr: u16) {
+        let val = mem.get_byte(addr);
+        let new_val = val.wrapping_add(0xff);
+        mem.set_byte(addr, val);
+        self.compute_nz_val(new_val);
+    }
+
     fn eor(&mut self, mem : &mut Mem, val: u8) {
         self.a = self.a ^ val;
         self.compute_nz();
+    }
+
+    fn inc(&mut self, mem : &mut Mem, addr: u16) {
+        let val = mem.get_byte(addr);
+        let new_val = val.wrapping_add(1);
+        mem.set_byte(addr, val);
+        self.compute_nz_val(new_val);
     }
 
     fn jmp(&mut self, mem : &mut Mem, addr: u16) {
@@ -1353,6 +1712,33 @@ impl Cpu {
         self.c = new_c;
         self.compute_nz_val(new_val);
         new_val
+    }
+
+    fn sbc(&mut self, mem : &mut Mem, val : u8) {
+        // Note : Based on adc, keep in sync.
+        // TODO : Verify this
+        // TODO : Deal with BCD mode
+
+
+        // Add numbers twice: once in signed, the other unsigned. This gets us
+        // the v and c flags.
+        let (mut u_sum, mut u_overflow) = self.a.overflowing_sub(val);
+        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
+
+        if self.c {
+            let(u_sumc, u_overflowc) = u_sum.overflowing_sub(1); // TODO ? add or sub here?
+            let(s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
+
+            u_sum = u_sumc;
+            u_overflow = u_overflow || u_overflowc;
+            s_overflow = s_overflow || s_overflowc;
+        }
+
+        self.c = u_overflow;
+        self.v = s_overflow;
+        self.a = u_sum;
+
+        self.compute_nz();
     }
 
     fn sta(&mut self, mem : &mut Mem, addr : u16) {
