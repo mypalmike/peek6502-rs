@@ -23,7 +23,7 @@ pub struct Cpu {
 impl Cpu {
     pub fn new() -> Cpu {
         let mut new_cpu = Cpu {
-            pc : 0x8000, // 0x0000,
+            pc : 0x0000,
             a : 0x00,
             x : 0x00,
             y : 0x00,
@@ -34,7 +34,7 @@ impl Cpu {
             d : false,
             z : false,
             c : false,
-            dispatch : [Cpu::unimpl; 256],
+            dispatch : [Cpu::unimpl; 256]
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -53,6 +53,7 @@ impl Cpu {
         new_cpu.dispatch[0x0d as usize] = Cpu::op_ora_abs;
         new_cpu.dispatch[0x0e as usize] = Cpu::op_asl_abs;
         new_cpu.dispatch[0x0f as usize] = Cpu::op_slo_abs;
+
         new_cpu.dispatch[0x10 as usize] = Cpu::op_bpl_rel;
         new_cpu.dispatch[0x11 as usize] = Cpu::op_ora_izy;
         new_cpu.dispatch[0x12 as usize] = Cpu::op_hlt;
@@ -66,15 +67,259 @@ impl Cpu {
         new_cpu.dispatch[0x1a as usize] = Cpu::op_nop;
         new_cpu.dispatch[0x1b as usize] = Cpu::op_slo_aby;
         new_cpu.dispatch[0x1c as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0x1d as usize] = Cpu::op_ora_abx;
+        new_cpu.dispatch[0x1e as usize] = Cpu::op_asl_abx;
+        new_cpu.dispatch[0x1f as usize] = Cpu::op_slo_abx;
 
+        new_cpu.dispatch[0x20 as usize] = Cpu::op_jsr_abs;
+        new_cpu.dispatch[0x21 as usize] = Cpu::op_and_izx;
+        new_cpu.dispatch[0x22 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x23 as usize] = Cpu::op_rla_izx;
+        new_cpu.dispatch[0x24 as usize] = Cpu::op_bit_zp;
+        new_cpu.dispatch[0x25 as usize] = Cpu::op_and_zp;
+        new_cpu.dispatch[0x26 as usize] = Cpu::op_rol_zp;
+        new_cpu.dispatch[0x27 as usize] = Cpu::op_rla_zp;
+        new_cpu.dispatch[0x28 as usize] = Cpu::op_plp;
+        new_cpu.dispatch[0x29 as usize] = Cpu::op_and_imm;
+        new_cpu.dispatch[0x2a as usize] = Cpu::op_rol;
+        new_cpu.dispatch[0x2b as usize] = Cpu::op_anc_imm;
+        new_cpu.dispatch[0x2c as usize] = Cpu::op_bit_abs;
+        new_cpu.dispatch[0x2d as usize] = Cpu::op_and_abs;
+        new_cpu.dispatch[0x2e as usize] = Cpu::op_rol_abs;
+        new_cpu.dispatch[0x2f as usize] = Cpu::op_rla_abs;
+
+        new_cpu.dispatch[0x30 as usize] = Cpu::op_bmi_rel;
+        new_cpu.dispatch[0x31 as usize] = Cpu::op_and_izy;
+        new_cpu.dispatch[0x32 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x33 as usize] = Cpu::op_rla_izy;
+        new_cpu.dispatch[0x34 as usize] = Cpu::op_nop_zpx;
+        new_cpu.dispatch[0x35 as usize] = Cpu::op_and_zpx;
+        new_cpu.dispatch[0x36 as usize] = Cpu::op_rol_zpx;
+        new_cpu.dispatch[0x37 as usize] = Cpu::op_rla_zpx;
+        new_cpu.dispatch[0x38 as usize] = Cpu::op_sec;
+        new_cpu.dispatch[0x39 as usize] = Cpu::op_and_aby;
+        new_cpu.dispatch[0x3a as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0x3b as usize] = Cpu::op_rla_aby;
+        new_cpu.dispatch[0x3c as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0x3d as usize] = Cpu::op_and_abx;
+        new_cpu.dispatch[0x3e as usize] = Cpu::op_rol_abx;
+        new_cpu.dispatch[0x3f as usize] = Cpu::op_rla_abx;
+
+        new_cpu.dispatch[0x40 as usize] = Cpu::op_rti;
+        new_cpu.dispatch[0x41 as usize] = Cpu::op_eor_izx;
+        new_cpu.dispatch[0x42 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x43 as usize] = Cpu::op_sre_izx;
+        new_cpu.dispatch[0x44 as usize] = Cpu::op_nop_zp;
+        new_cpu.dispatch[0x45 as usize] = Cpu::op_eor_zp;
+        new_cpu.dispatch[0x46 as usize] = Cpu::op_lsr_zp;
+        new_cpu.dispatch[0x47 as usize] = Cpu::op_sre_zp;
+        new_cpu.dispatch[0x48 as usize] = Cpu::op_pha;
+        new_cpu.dispatch[0x49 as usize] = Cpu::op_eor_imm;
+        new_cpu.dispatch[0x4a as usize] = Cpu::op_lsr;
+        new_cpu.dispatch[0x4b as usize] = Cpu::op_alr_imm;
         new_cpu.dispatch[0x4c as usize] = Cpu::op_jmp_abs;
+        new_cpu.dispatch[0x4d as usize] = Cpu::op_eor_abs;
+        new_cpu.dispatch[0x4e as usize] = Cpu::op_lsr_abs;
+        new_cpu.dispatch[0x4f as usize] = Cpu::op_sre_abs;
+
+        new_cpu.dispatch[0x50 as usize] = Cpu::op_bvc_rel;
+        new_cpu.dispatch[0x51 as usize] = Cpu::op_eor_izy;
+        new_cpu.dispatch[0x52 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x53 as usize] = Cpu::op_sre_izy;
+        new_cpu.dispatch[0x54 as usize] = Cpu::op_nop_zpx;
+        new_cpu.dispatch[0x55 as usize] = Cpu::op_eor_zpx;
+        new_cpu.dispatch[0x56 as usize] = Cpu::op_lsr_zpx;
+        new_cpu.dispatch[0x57 as usize] = Cpu::op_sre_zpx;
+        new_cpu.dispatch[0x58 as usize] = Cpu::op_cli;
+        new_cpu.dispatch[0x59 as usize] = Cpu::op_eor_aby;
+        new_cpu.dispatch[0x5a as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0x5b as usize] = Cpu::op_sre_aby;
+        new_cpu.dispatch[0x5c as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0x5d as usize] = Cpu::op_eor_abx;
+        new_cpu.dispatch[0x5e as usize] = Cpu::op_lsr_abx;
+        new_cpu.dispatch[0x5f as usize] = Cpu::op_sre_abx;
+
+        new_cpu.dispatch[0x60 as usize] = Cpu::op_rts;
+        new_cpu.dispatch[0x61 as usize] = Cpu::op_adc_izx;
+        new_cpu.dispatch[0x62 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x63 as usize] = Cpu::op_rra_izx;
+        new_cpu.dispatch[0x64 as usize] = Cpu::op_nop_zp;
+        new_cpu.dispatch[0x65 as usize] = Cpu::op_adc_zp;
+        new_cpu.dispatch[0x66 as usize] = Cpu::op_ror_zp;
+        new_cpu.dispatch[0x67 as usize] = Cpu::op_rra_zp;
+        new_cpu.dispatch[0x68 as usize] = Cpu::op_pla;
         new_cpu.dispatch[0x69 as usize] = Cpu::op_adc_imm;
+        new_cpu.dispatch[0x6a as usize] = Cpu::op_ror;
+        new_cpu.dispatch[0x6b as usize] = Cpu::op_arr_imm;
+        new_cpu.dispatch[0x6c as usize] = Cpu::op_jmp_ind;
+        new_cpu.dispatch[0x6d as usize] = Cpu::op_adc_abs;
+        new_cpu.dispatch[0x6e as usize] = Cpu::op_ror_abs;
+        new_cpu.dispatch[0x6f as usize] = Cpu::op_rra_abs;
+
+        new_cpu.dispatch[0x70 as usize] = Cpu::op_bvs_rel;
+        new_cpu.dispatch[0x71 as usize] = Cpu::op_adc_izy;
+        new_cpu.dispatch[0x72 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x73 as usize] = Cpu::op_rra_izy;
+        new_cpu.dispatch[0x74 as usize] = Cpu::op_nop_zpx;
+        new_cpu.dispatch[0x75 as usize] = Cpu::op_adc_zpx;
+        new_cpu.dispatch[0x76 as usize] = Cpu::op_ror_zpx;
+        new_cpu.dispatch[0x77 as usize] = Cpu::op_rra_zpx;
+        new_cpu.dispatch[0x78 as usize] = Cpu::op_sei;
+        new_cpu.dispatch[0x79 as usize] = Cpu::op_adc_aby;
+        new_cpu.dispatch[0x7a as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0x7b as usize] = Cpu::op_rda_aby;
+        new_cpu.dispatch[0x7c as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0x7d as usize] = Cpu::op_adc_abx;
+        new_cpu.dispatch[0x7e as usize] = Cpu::op_ror_abx;
+        new_cpu.dispatch[0x7f as usize] = Cpu::op_rra_abx;
+
+        new_cpu.dispatch[0x80 as usize] = Cpu::op_nop_imm;
+        new_cpu.dispatch[0x81 as usize] = Cpu::op_sta_izx;
+        new_cpu.dispatch[0x82 as usize] = Cpu::op_nop_imm;
+        new_cpu.dispatch[0x83 as usize] = Cpu::op_sax_izx;
+        new_cpu.dispatch[0x84 as usize] = Cpu::op_sty_zp;
+        new_cpu.dispatch[0x85 as usize] = Cpu::op_sta_zp;
         new_cpu.dispatch[0x86 as usize] = Cpu::op_stx_zp;
+        new_cpu.dispatch[0x87 as usize] = Cpu::op_sax_zp;
+        new_cpu.dispatch[0x88 as usize] = Cpu::op_dey;
+        new_cpu.dispatch[0x89 as usize] = Cpu::op_nop_imm;
+        new_cpu.dispatch[0x8a as usize] = Cpu::op_txa;
+        new_cpu.dispatch[0x8b as usize] = Cpu::op_xaa_imm;
+        new_cpu.dispatch[0x8c as usize] = Cpu::op_sty_abs;
+        new_cpu.dispatch[0x8d as usize] = Cpu::op_sta_abs;
+        new_cpu.dispatch[0x8e as usize] = Cpu::op_stx_abs;
+        new_cpu.dispatch[0x8f as usize] = Cpu::op_sax_abs;
+
+        new_cpu.dispatch[0x90 as usize] = Cpu::op_bcc_rel;
+        new_cpu.dispatch[0x91 as usize] = Cpu::op_sta_izy;
+        new_cpu.dispatch[0x92 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0x93 as usize] = Cpu::op_ahx_izy;
+        new_cpu.dispatch[0x94 as usize] = Cpu::op_sty_zpx;
+        new_cpu.dispatch[0x95 as usize] = Cpu::op_sta_zpx;
+        new_cpu.dispatch[0x96 as usize] = Cpu::op_stx_zpy;
+        new_cpu.dispatch[0x97 as usize] = Cpu::op_sax_zpy;
+        new_cpu.dispatch[0x98 as usize] = Cpu::op_tya;
+        new_cpu.dispatch[0x99 as usize] = Cpu::op_sta_aby;
+        new_cpu.dispatch[0x9a as usize] = Cpu::op_txs;
+        new_cpu.dispatch[0x9b as usize] = Cpu::op_tas_aby;
+        new_cpu.dispatch[0x9c as usize] = Cpu::op_shy_abx;
+        new_cpu.dispatch[0x9d as usize] = Cpu::op_sta_abx;
+        new_cpu.dispatch[0x9e as usize] = Cpu::op_shx_aby;
+        new_cpu.dispatch[0x9f as usize] = Cpu::op_ahx_aby;
+
+        new_cpu.dispatch[0xa0 as usize] = Cpu::op_ldy_imm;
+        new_cpu.dispatch[0xa1 as usize] = Cpu::op_lda_izx;
+        new_cpu.dispatch[0xa2 as usize] = Cpu::op_ldx_imm;
+        new_cpu.dispatch[0xa3 as usize] = Cpu::op_lax_izx;
+        new_cpu.dispatch[0xa4 as usize] = Cpu::op_ldy_zp;
         new_cpu.dispatch[0xa5 as usize] = Cpu::op_lda_zp;
+        new_cpu.dispatch[0xa6 as usize] = Cpu::op_ldx_zp;
+        new_cpu.dispatch[0xa7 as usize] = Cpu::op_lax_zp;
+        new_cpu.dispatch[0xa8 as usize] = Cpu::op_tay;
         new_cpu.dispatch[0xa9 as usize] = Cpu::op_lda_imm;
         new_cpu.dispatch[0xaa as usize] = Cpu::op_tax;
+        new_cpu.dispatch[0xab as usize] = Cpu::op_lax_imm;
+        new_cpu.dispatch[0xac as usize] = Cpu::op_ldy_abs;
+        new_cpu.dispatch[0xad as usize] = Cpu::op_lda_abs;
+        new_cpu.dispatch[0xae as usize] = Cpu::op_ldx_abs;
+        new_cpu.dispatch[0xaf as usize] = Cpu::op_lax_abs;
+
+        new_cpu.dispatch[0xb0 as usize] = Cpu::op_bcs_rel;
+        new_cpu.dispatch[0xb1 as usize] = Cpu::op_lda_izy;
+        new_cpu.dispatch[0xb2 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0xb3 as usize] = Cpu::op_lax_izy;
+        new_cpu.dispatch[0xb4 as usize] = Cpu::op_ldy_zpx;
+        new_cpu.dispatch[0xb5 as usize] = Cpu::op_lda_zpx;
+        new_cpu.dispatch[0xb6 as usize] = Cpu::op_ldx_zpy;
+        new_cpu.dispatch[0xb7 as usize] = Cpu::op_lax_zpy;
+        new_cpu.dispatch[0xb8 as usize] = Cpu::op_clv;
+        new_cpu.dispatch[0xb9 as usize] = Cpu::op_lda_aby;
+        new_cpu.dispatch[0xba as usize] = Cpu::op_tsx;
+        new_cpu.dispatch[0xbb as usize] = Cpu::op_las_aby;
+        new_cpu.dispatch[0xbc as usize] = Cpu::op_ldy_abx;
+        new_cpu.dispatch[0xbd as usize] = Cpu::op_lda_abx;
+        new_cpu.dispatch[0xbe as usize] = Cpu::op_ldx_aby;
+        new_cpu.dispatch[0xbf as usize] = Cpu::op_lax_aby;
+
+        new_cpu.dispatch[0xc0 as usize] = Cpu::op_cpy_imm;
+        new_cpu.dispatch[0xc1 as usize] = Cpu::op_cmp_izx;
+        new_cpu.dispatch[0xc2 as usize] = Cpu::op_nop_imm;
+        new_cpu.dispatch[0xc3 as usize] = Cpu::op_dcp_izx;
+        new_cpu.dispatch[0xc4 as usize] = Cpu::op_cpy_zp;
+        new_cpu.dispatch[0xc5 as usize] = Cpu::op_cmp_zp;
+        new_cpu.dispatch[0xc6 as usize] = Cpu::op_dec_zp;
+        new_cpu.dispatch[0xc7 as usize] = Cpu::op_dcp_zp;
+        new_cpu.dispatch[0xc8 as usize] = Cpu::op_iny;
+        new_cpu.dispatch[0xc9 as usize] = Cpu::op_cmp_imm;
+        new_cpu.dispatch[0xca as usize] = Cpu::op_dex;
+        new_cpu.dispatch[0xcb as usize] = Cpu::op_axs_imm;
+        new_cpu.dispatch[0xcc as usize] = Cpu::op_cpy_abs;
+        new_cpu.dispatch[0xcd as usize] = Cpu::op_cmp_abs;
+        new_cpu.dispatch[0xce as usize] = Cpu::op_dec_abs;
+        new_cpu.dispatch[0xcf as usize] = Cpu::op_dcp_abs;
+
+        new_cpu.dispatch[0xd0 as usize] = Cpu::op_bne_rel;
+        new_cpu.dispatch[0xd1 as usize] = Cpu::op_cmp_izy;
+        new_cpu.dispatch[0xd2 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0xd3 as usize] = Cpu::op_dcp_izy;
+        new_cpu.dispatch[0xd4 as usize] = Cpu::op_nop_zpx;
+        new_cpu.dispatch[0xd5 as usize] = Cpu::op_cmp_zpx;
+        new_cpu.dispatch[0xd6 as usize] = Cpu::op_dec_zpx;
+        new_cpu.dispatch[0xd7 as usize] = Cpu::op_dcp_zpx;
+        new_cpu.dispatch[0xd8 as usize] = Cpu::op_cld;
+        new_cpu.dispatch[0xd9 as usize] = Cpu::op_cmp_aby;
+        new_cpu.dispatch[0xda as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0xdb as usize] = Cpu::op_dcp_aby;
+        new_cpu.dispatch[0xdc as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0xdd as usize] = Cpu::op_cmp_abx;
+        new_cpu.dispatch[0xde as usize] = Cpu::op_dec_abx;
+        new_cpu.dispatch[0xdf as usize] = Cpu::op_dcp_abx;
+
+        new_cpu.dispatch[0xe0 as usize] = Cpu::op_cpx_imm;
+        new_cpu.dispatch[0xe1 as usize] = Cpu::op_sbc_izx;
+        new_cpu.dispatch[0xe2 as usize] = Cpu::op_nop_imm;
+        new_cpu.dispatch[0xe3 as usize] = Cpu::op_isc_izx;
+        new_cpu.dispatch[0xe4 as usize] = Cpu::op_cpx_zp;
+        new_cpu.dispatch[0xe5 as usize] = Cpu::op_sbc_zp;
+        new_cpu.dispatch[0xe6 as usize] = Cpu::op_inc;
+        new_cpu.dispatch[0xe7 as usize] = Cpu::op_isc_zp;
+        new_cpu.dispatch[0xe8 as usize] = Cpu::op_inx;
+        new_cpu.dispatch[0xe9 as usize] = Cpu::op_sbc_imm;
+        new_cpu.dispatch[0xea as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0xeb as usize] = Cpu::op_sbc_imm;
+        new_cpu.dispatch[0xec as usize] = Cpu::op_cpx_abs;
+        new_cpu.dispatch[0xed as usize] = Cpu::op_sbc_abs;
+        new_cpu.dispatch[0xee as usize] = Cpu::op_inc_abs;
+        new_cpu.dispatch[0xef as usize] = Cpu::op_isc_abs;
+
+        new_cpu.dispatch[0xf0 as usize] = Cpu::op_beq_rel;
+        new_cpu.dispatch[0xf1 as usize] = Cpu::op_sbc_izy;
+        new_cpu.dispatch[0xf2 as usize] = Cpu::op_hlt;
+        new_cpu.dispatch[0xf3 as usize] = Cpu::op_isc_izy;
+        new_cpu.dispatch[0xf4 as usize] = Cpu::op_nop_zpx;
+        new_cpu.dispatch[0xf5 as usize] = Cpu::op_sbc_zpx;
+        new_cpu.dispatch[0xf6 as usize] = Cpu::op_inc_zpx;
+        new_cpu.dispatch[0xf7 as usize] = Cpu::op_isc_zpx;
+        new_cpu.dispatch[0xf8 as usize] = Cpu::op_sed;
+        new_cpu.dispatch[0xf9 as usize] = Cpu::op_sbc_aby;
+        new_cpu.dispatch[0xfa as usize] = Cpu::op_nop;
+        new_cpu.dispatch[0xfb as usize] = Cpu::op_isc_aby;
+        new_cpu.dispatch[0xfc as usize] = Cpu::op_nop_abx;
+        new_cpu.dispatch[0xfd as usize] = Cpu::op_sbc_abx;
+        new_cpu.dispatch[0xfe as usize] = Cpu::op_inc_abx;
+        new_cpu.dispatch[0xff as usize] = Cpu::op_isc_abx;
 
         new_cpu
+    }
+
+    pub fn reset(&mut self, mem : &mut Mem) {
+        // 6502 starts with pc pointed at value found in memory at 0xfffc
+        // self.pc = mem.get_word(0xfffc_u16);
+
+
+        // Test code.
+        // From https://github.com/Klaus2m5/6502_65C02_functional_tests/blob/master/6502_functional_test.a65
+        self.pc = 0x0400_u16
     }
 
     pub fn tick(&mut self, mem : &mut Mem) {
@@ -601,14 +846,17 @@ impl Cpu {
         self.a = new_val;
     }
 
-    // 0x4b alr_imm
+    // 0x4b, time 2
+    fn op_alr_imm(&mut self, mem : &mut Mem) {
+        panic!("op_alr_imm is not implemented");
+    }
 
     // 0x4c, time 3
     fn op_jmp_abs(&mut self, mem : &mut Mem) {
-        panic!("op_jmp_abs is not implemented");
+        // panic!("op_jmp_abs is not implemented");
 
-        // let addr = self.fetch_addr_mode_abs(mem);
-        // self.jmp(addr);
+        let addr = self.fetch_addr_mode_abs(mem);
+        self.jmp(mem, addr);
         // println!("jmp_abs 0x{:04x}", addr);
     }
 
@@ -643,7 +891,10 @@ impl Cpu {
 
     // 0x52 hlt
 
-    // 0x53 sre_izy
+    // 0x53, time 8, unofficial
+    fn op_sre_izy(&mut self, mem : &mut Mem) {
+        panic!("op_sre_izy is not implemented");
+    }
 
     // 0x54 nop_zpx
 
@@ -865,6 +1116,9 @@ impl Cpu {
     }
 
     // 0x80 nop_imm
+    fn op_nop_imm(&mut self, mem : &mut Mem) {
+        self.pc += 1;
+    }
 
     // 0x81, time 6
     fn op_sta_izx(&mut self, mem : &mut Mem) {
