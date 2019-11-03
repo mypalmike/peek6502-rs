@@ -325,6 +325,10 @@ impl Cpu {
     pub fn tick(&mut self, mem : &mut Mem) {
         let pc = self.pc;
         let opcode = self.fetch_byte(mem);
+        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} p:{:02x} s:{:02x} n:{} v:{} d:{} z:{} c:{}",
+                self.pc, self.a, self.x, self.y, self.p, self.s, self.n as i8, self.v as i8,
+                self.d as i8, self.z as i8, self.c as i8);
+
         println!("opcode {:02x} at {:04x}", opcode, pc);
 
         self.dispatch[opcode as usize](self, mem);
@@ -433,8 +437,9 @@ impl Cpu {
     }
 
     fn fetch_addr_mode_rel(&mut self, mem : &mut Mem) -> u16 {
-        let pc = (self.pc - 1) as i16;
+        // Branch instructions are relative to PC of the next instruction.
         let offset = self.fetch_byte(mem) as i8 as i16;
+        let pc = self.pc as i16;
         (pc + offset) as u16
     }
 
@@ -1159,7 +1164,8 @@ impl Cpu {
 
     // 0x88, time 2
     fn op_dey(&mut self, mem : &mut Mem) {
-        self.y -= 1;
+        self.y = self.y.wrapping_add(0xff);
+        self.compute_nz_val(self.y);
     }
 
     // 0x89 nop_imm
@@ -1911,12 +1917,12 @@ impl Cpu {
 
     fn ldx(&mut self, mem : &mut Mem, val: u8) {
         self.x = val;
-        self.compute_nz();
+        self.compute_nz_val(self.x);
     }
 
     fn ldy(&mut self, mem : &mut Mem, val: u8) {
         self.y = val;
-        self.compute_nz();
+        self.compute_nz_val(self.y);
     }
 
     fn lsr_mem(&mut self, mem : &mut Mem, addr: u16) {
