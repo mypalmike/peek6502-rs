@@ -1,5 +1,6 @@
 use crate::cpu::Cpu;
 use crate::mem::Mem;
+use crate::debugger::Debugger;
 
 pub struct Atari800 {
     mem : Mem,

@@ -1,3 +1,4 @@
+use crate::debugger::Debugger;
 use crate::mem::Mem;
 
 const STACK_BASE: u16 = 0x0100_u16;
@@ -8,7 +9,7 @@ pub struct Cpu {
     a : u8,
     x : u8,
     y : u8,
-    p : u8,
+    // p : u8,
     s : u8,
     n : bool,
     v : bool,
@@ -18,6 +19,7 @@ pub struct Cpu {
 
     // Instruction dispatch table
     dispatch : [fn(&mut Cpu, &mut Mem); 256],
+    debugger : Debugger,
 }
 
 impl Cpu {
@@ -27,14 +29,15 @@ impl Cpu {
             a : 0x00,
             x : 0x00,
             y : 0x00,
-            p : 0x00,
+            // p : 0x00,
             s : 0xff, // 0xfd, ??
             n : false,
             v : false,
             d : false,
             z : false,
             c : false,
-            dispatch : [Cpu::unimpl; 256]
+            dispatch : [Cpu::unimpl; 256],
+            debugger : Debugger::new(),
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -320,16 +323,22 @@ impl Cpu {
         // Test code.
         // From https://github.com/Klaus2m5/6502_65C02_functional_tests/blob/master/6502_functional_test.a65
         self.pc = 0x0400_u16
+        // self.pc = 0x0594_u16;
     }
 
     pub fn tick(&mut self, mem : &mut Mem) {
         let pc = self.pc;
-        let opcode = self.fetch_byte(mem);
-        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} p:{:02x} s:{:02x} n:{} v:{} d:{} z:{} c:{}",
-                self.pc, self.a, self.x, self.y, self.p, self.s, self.n as i8, self.v as i8,
+        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} n:{} v:{} d:{} z:{} c:{}",
+                self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8,
                 self.d as i8, self.z as i8, self.c as i8);
 
-        println!("opcode {:02x} at {:04x}", opcode, pc);
+        self.debugger.disassemble(mem.get_byte(self.pc),
+                mem.get_byte(self.pc + 1),
+                mem.get_byte(self.pc + 2));
+
+        let opcode = self.fetch_byte(mem);
+
+        // println!("opcode {:02x} at {:04x}", opcode, pc);
 
         self.dispatch[opcode as usize](self, mem);
     }
@@ -498,7 +507,7 @@ impl Cpu {
 
     // 0x08, time 3
     fn op_php(&mut self, mem : &mut Mem) {
-        let status = self.status();
+        let status = self.get_status();
         self.stack_push_byte(mem, status);
     }
 
@@ -674,7 +683,8 @@ impl Cpu {
 
     // 0x28, time 4
     fn op_plp(&mut self, mem : &mut Mem) {
-        self.p = self.stack_pop_byte(mem);
+        let val = self.stack_pop_byte(mem);
+        self.set_status(val);
     }
 
     // 0x29, time 2
@@ -717,13 +727,16 @@ impl Cpu {
 
     // 0x30, time 2+
     fn op_bmi_rel(&mut self, mem : &mut Mem) {
-        // TODO : Review
-        if self.n {
-            let offset = mem.get_byte(self.pc) as i8 as i16;
-            self.pc = (self.pc as i16 + offset) as u16;
-        } else {
-            self.pc += 1;
-        }
+        let addr = self.fetch_addr_mode_rel(mem);
+        self.bmi(mem, addr);
+
+        // // TODO : Review
+        // if self.n {
+        //     let offset = mem.get_byte(self.pc) as i8 as i16;
+        //     self.pc = (self.pc as i16 + offset) as u16;
+        // } else {
+        //     self.pc += 1;
+        // }
     }
 
     // 0x31, time 5+
@@ -1260,7 +1273,7 @@ impl Cpu {
 
     // 0x9a, time 2
     fn op_txs(&mut self, mem : &mut Mem) {
-        self.s = self.y;
+        self.s = self.x;
         self.compute_nz_val(self.s);
     }
 
@@ -1855,6 +1868,12 @@ impl Cpu {
         }
     }
 
+    fn bmi(&mut self, mem : &mut Mem, addr: u16) {
+        if self.n {
+            self.pc = addr;
+        }
+    }
+
     fn bne(&mut self, mem : &mut Mem, addr: u16) {
         // TODO : verify this is what bne means
         if !self.z {
@@ -1883,7 +1902,8 @@ impl Cpu {
 
     fn cmp(&mut self, mem : &mut Mem, val1: u8, val2: u8) {
         let (delta, overflow) = val1.overflowing_sub(val2);
-        self.c = overflow;
+        // This is unintuitive, but CMP is like SBC with an implied carry bit already set.
+        self.c = !overflow;
         self.compute_nz_val(delta)
     }
 
@@ -2061,7 +2081,7 @@ impl Cpu {
     //     println!("jmp_abs 0x{:04x}", addr);
     // }
 
-    fn status(&self) -> u8 {
+    fn get_status(&self) -> u8 {
         let mut st = 0x20;
         if self.n {
             st = st | 0x80;
@@ -2082,5 +2102,15 @@ impl Cpu {
         }
 
         st
+    }
+
+    fn set_status(&mut self, status: u8) {
+        let mut st = 0x20;
+
+        self.n = status & 0x80 == 0x80;
+        self.v = status & 0x40 == 0x40;
+        self.d = status & 0x08 == 0x08;
+        self.z = status & 0x04 == 0x04;
+        self.c = status & 0x01 == 0x01;
     }
 }
