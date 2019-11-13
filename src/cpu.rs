@@ -2066,10 +2066,9 @@ impl Cpu {
     }
 
     fn stack_push_word(&mut self, mem : &mut Mem, val : u16) {
-        let addr = self.addr_stack();
-        self.s -= 1;
+        let addr = self.addr_stack() - 1;
         mem.set_word(addr, val);
-        self.s -= 1;
+        self.s -= 2;
     }
 
     fn stack_pop_word(&mut self, mem : &mut Mem) -> u16 {
