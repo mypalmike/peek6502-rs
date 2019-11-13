@@ -2,6 +2,17 @@ use crate::debugger::Debugger;
 use crate::mem::Mem;
 
 const STACK_BASE: u16 = 0x0100_u16;
+const VECTOR_NMI: u16 = 0xfffa_u16;
+const VECTOR_RESET: u16 = 0xfffc_u16;
+const VECTOR_IRQBRK: u16 = 0xfffe_u16;
+const STATUS_NEG : u8 = 0x80_u8;
+const STATUS_OVR : u8 = 0x40_u8;
+const STATUS_RES : u8 = 0x20_u8;
+const STATUS_BRK : u8 = 0x10_u8;
+const STATUS_DCM : u8 = 0x08_u8;
+const STATUS_INT : u8 = 0x04_u8;
+const STATUS_ZER : u8 = 0x02_u8;
+const STATUS_CAR : u8 = 0x01_u8;
 
 pub struct Cpu {
     // Cpu registers and flags
@@ -340,22 +351,12 @@ impl Cpu {
 
         let opcode = self.fetch_byte(mem);
 
-        // println!("opcode {:02x} at {:04x}", opcode, pc);
-
         self.dispatch[opcode as usize](self, mem);
     }
 
     pub fn unimpl(&mut self, mem : &mut Mem) {
         panic!("Unimplemented instruction");
     }
-
-    // fn addr_for() -> u16 {
-    //     let addr1 = mem.get_byte(self.pc) as u16;
-    //     self.pc += 1;
-    //     let addr2 = (mem.get_byte(self.pc) as u16) << 8;
-    //     self.pc += 1;
-    //     let addr = addr1 | addr2;
-    // }
 
     // Fetch from program counter
     fn fetch_byte(&mut self, mem : &mut Mem) -> u8 {
@@ -381,7 +382,7 @@ impl Cpu {
     }
 
     fn fetch_addr_mode_abx(&mut self, mem : &mut Mem) -> u16 {
-        self.fetch_word(mem) + self.y as u16
+        self.fetch_word(mem) + self.x as u16
     }
 
     fn fetch_val_mode_abx(&mut self, mem : &mut Mem) -> u8 {
@@ -465,8 +466,13 @@ impl Cpu {
 
     // 0x00, time 7
     fn op_brk(&mut self, mem : &mut Mem) {
-        // time 7
-        panic!("op_brk is not implemented");
+        let addr = mem.get_word(VECTOR_IRQBRK);
+        let status = self.get_status();
+        self.i = false;
+        self.stack_push_word(mem, self.pc);
+        self.stack_push_byte(mem, status);
+        self.pc = addr;
+        // panic!("op_brk is not implemented");
     }
 
     // 0x01, time 6
@@ -860,11 +866,8 @@ impl Cpu {
 
     // 0x4c, time 3
     fn op_jmp_abs(&mut self, mem : &mut Mem) {
-        // panic!("op_jmp_abs is not implemented");
-
         let addr = self.fetch_addr_mode_abs(mem);
         self.jmp(mem, addr);
-        // println!("jmp_abs 0x{:04x}", addr);
     }
 
     // 0x4d, time 4
@@ -1157,7 +1160,6 @@ impl Cpu {
     fn op_stx_zp(&mut self, mem : &mut Mem) {
         let addr = self.fetch_addr_mode_zp(mem);
         self.stx(mem, addr);
-        println!("stx_zp {:04x} {:02x}", addr, self.x);
     }
 
     // 0x87, time 3
@@ -1326,7 +1328,6 @@ impl Cpu {
     fn op_lda_zp(&mut self, mem : &mut Mem) {
         let val = self.fetch_val_mode_zp(mem);
         self.lda(mem, val);
-        println!("lda_zp {:02x}", self.a);
     }
 
     // 0xa6, time 3
@@ -1350,14 +1351,12 @@ impl Cpu {
     fn op_lda_imm(&mut self, mem : &mut Mem) {
         let val = self.fetch_byte(mem);
         self.lda(mem, val);
-        println!("lda_imm {:02x}", self.a);
     }
 
     // 0xaa, time 2
     fn op_tax(&mut self, mem : &mut Mem) {
         self.x = self.a;
         self.compute_nz_val(self.x);
-        println!("tax {:02x}", self.x);
     }
 
     // 0xab, time 2, unofficial
@@ -2079,55 +2078,44 @@ impl Cpu {
         val
     }
 
-    // fn jmp_abs(&mut self, mem : &mut Mem) {
-    //     self.pc += 1;
-    //     let addr1 = mem.get_byte(self.pc) as u16;
-    //     self.pc += 1;
-    //     let addr2 = (mem.get_byte(self.pc) as u16) << 8;
-    //     self.pc += 1;
-    //     let addr = addr1 | addr2;
-    //     self.pc = addr;
-    //     println!("jmp_abs 0x{:04x}", addr);
-    // }
-
     fn get_status(&self) -> u8 {
-        let mut st = 0x20;
+        let mut st = STATUS_RES;
         if self.n {
-            st = st | 0x80;
+            st = st | STATUS_NEG;
         }
         if self.v {
-            st = st | 0x40;
+            st = st | STATUS_OVR;
         }
         // TODO : brk bit. Set for now to pass tests.
-        st = st | 0x10;
+        st = st | STATUS_BRK;
 
         if self.d {
-            st = st | 0x08;
+            st = st | STATUS_DCM;
         }
 
         // TODO : interrupt bit.
         if self.i {
-            st = st | 0x04;
+            st = st | STATUS_INT;
         }
 
         if self.z {
-            st = st | 0x02;
+            st = st | STATUS_ZER;
         }
         if self.c {
-            st = st | 0x01;
+            st = st | STATUS_CAR;
         }
 
         st
     }
 
     fn set_status(&mut self, status: u8) {
-        let mut st = 0x20;
+        // let mut st = STATUS_OVR;
 
-        self.n = status & 0x80 == 0x80;
-        self.v = status & 0x40 == 0x40;
-        self.d = status & 0x08 == 0x08;
-        self.i = status & 0x04 == 0x04; //?
-        self.z = status & 0x02 == 0x02;
-        self.c = status & 0x01 == 0x01;
+        self.n = status & STATUS_NEG == STATUS_NEG;
+        self.v = status & STATUS_OVR == STATUS_OVR;
+        self.d = status & STATUS_DCM == STATUS_DCM;
+        self.i = status & STATUS_INT == STATUS_INT; //?
+        self.z = status & STATUS_ZER == STATUS_ZER;
+        self.c = status & STATUS_CAR == STATUS_CAR;
     }
 }
