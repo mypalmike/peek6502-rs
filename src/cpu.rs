@@ -434,7 +434,7 @@ impl Cpu {
 
     fn fetch_addr_mode_izy(&mut self, mem : &mut Mem) -> u16 {
         let addr = self.fetch_byte(mem) as u16;
-        mem.get_word(addr).wrapping_add(addr)
+        mem.get_word(addr).wrapping_add(self.y as u16)
     }
 
     fn fetch_val_mode_izy(&mut self, mem : &mut Mem) -> u8 {

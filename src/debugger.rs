@@ -6,11 +6,6 @@ use crate::cpu::Cpu;
 
 extern crate hex;
 
-// use crate::cpu::Cpu;
-// use crate::mem::Mem;
-
-// pub mod cpu;
-// pub mod mem;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
@@ -42,9 +37,7 @@ impl Debugger {
             show_disassembly: false,
             running: false,
             breakpoints: HashSet::new(),
-//            opcodes: [(Op::NOP, Mode::IMP); 256],
-            opcodes: [ // (Op::BRK, Mode::IMP), (Op::ORA, Mode::IZX), (Op::HLT, Mode::IMP), (Op::SLO, Mode::IZX)],
-
+            opcodes: [
                 // 0x00 - 0x0F
                 (Op::BRK, Mode::IMP), (Op::ORA, Mode::IZX), (Op::HLT, Mode::IMP), (Op::SLO, Mode::IZX),
                 (Op::NOP, Mode::ZP),  (Op::ORA, Mode::ZP),  (Op::ASL, Mode::ZP),  (Op::SLO, Mode::ZP),
@@ -219,8 +212,6 @@ impl Debugger {
     }
 
     pub fn disassemble(&self, b1: u8, b2: u8, b3: u8) {
-        // let pc = cpu.pc;
-        // let opcode = mem.get_byte(pc);
         let opcode = b1;
         let (op, mode) = self.opcodes[opcode as usize];
 
@@ -241,6 +232,5 @@ impl Debugger {
         };
 
         println!("{}", disasm);
-        // println!("op:{:?} mode:{:?}", op, mode);
     }
 }
