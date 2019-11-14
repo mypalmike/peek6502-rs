@@ -807,8 +807,10 @@ impl Cpu {
 
     // 0x40, time 6
     fn op_rti(&mut self, mem : &mut Mem) {
-        // TODO
-        panic!("op_rti is not implemented");
+        let val = self.stack_pop_byte(mem);
+        let addr = self.stack_pop_word(mem);
+        self.set_status(val, false);
+        self.pc = addr;
     }
 
     // 0x41, time 6
@@ -1169,7 +1171,7 @@ impl Cpu {
 
     // 0x88, time 2
     fn op_dey(&mut self, mem : &mut Mem) {
-        self.y = self.y.wrapping_add(0xff);
+        self.y = self.y.wrapping_sub(1);
         self.compute_nz_val(self.y);
     }
 
@@ -1266,7 +1268,6 @@ impl Cpu {
     // 0x9a, time 2
     fn op_txs(&mut self, mem : &mut Mem) {
         self.s = self.x;
-        self.compute_nz_val(self.s);
     }
 
     // 0x9b, time 5
@@ -1530,7 +1531,7 @@ impl Cpu {
 
     // 0xca, time 2
     fn op_dex(&mut self, mem : &mut Mem) {
-        self.x = self.x.wrapping_add(0xff);
+        self.x = self.x.wrapping_sub(1);
         self.compute_nz_val(self.x);
     }
 
@@ -1918,7 +1919,7 @@ impl Cpu {
 
     fn dec(&mut self, mem : &mut Mem, addr: u16) {
         let val = mem.get_byte(addr);
-        let new_val = val.wrapping_add(0xff);
+        let new_val = val.wrapping_sub(1);
         mem.set_byte(addr, val);
         self.compute_nz_val(new_val);
     }
@@ -2055,11 +2056,11 @@ impl Cpu {
     fn stack_push_byte(&mut self, mem : &mut Mem, val : u8) {
         let addr = self.addr_stack();
         mem.set_byte(addr, val);
-        self.s -= 1;
+        self.s = self.s.wrapping_sub(1);
     }
 
     fn stack_pop_byte(&mut self, mem : &mut Mem) -> u8 {
-        self.s += 1;
+        self.s = self.s.wrapping_add(1);
         let addr = self.addr_stack();
         mem.get_byte(addr)
     }
@@ -2067,14 +2068,14 @@ impl Cpu {
     fn stack_push_word(&mut self, mem : &mut Mem, val : u16) {
         let addr = self.addr_stack() - 1;
         mem.set_word(addr, val);
-        self.s -= 2;
+        self.s = self.s.wrapping_sub(2);
     }
 
     fn stack_pop_word(&mut self, mem : &mut Mem) -> u16 {
-        self.s += 1;
+        self.s = self.s.wrapping_add(1);
         let addr = self.addr_stack();
         let val = mem.get_word(addr);
-        self.s += 1;
+        self.s = self.s.wrapping_add(1);
         val
     }
 
