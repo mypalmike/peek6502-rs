@@ -1,4 +1,10 @@
 use std::collections::HashSet;
+use std::io;
+
+use crate::mem::Mem;
+use crate::cpu::Cpu;
+
+extern crate hex;
 
 // use crate::cpu::Cpu;
 // use crate::mem::Mem;
@@ -22,6 +28,9 @@ pub enum Mode {
 }
 
 pub struct Debugger {
+    show_state: bool,
+    show_disassembly: bool,
+    running: bool,
     breakpoints: HashSet<u16>,
     opcodes: [(Op, Mode); 256],
 }
@@ -29,6 +38,9 @@ pub struct Debugger {
 impl Debugger {
     pub fn new() -> Debugger {
         Debugger {
+            show_state: false,
+            show_disassembly: false,
+            running: false,
             breakpoints: HashSet::new(),
 //            opcodes: [(Op::NOP, Mode::IMP); 256],
             opcodes: [ // (Op::BRK, Mode::IMP), (Op::ORA, Mode::IZX), (Op::HLT, Mode::IMP), (Op::SLO, Mode::IZX)],
@@ -130,6 +142,80 @@ impl Debugger {
                 (Op::NOP, Mode::ABX), (Op::SBC, Mode::ABX), (Op::INC, Mode::ABX), (Op::ISC, Mode::ABX),
             ],
         }
+    }
+
+    pub fn tick(&mut self, cpu: &mut Cpu, mem: &mut Mem) {
+        if self.running {
+            self.cpu_tick(cpu, mem);
+            if self.breakpoints.contains(&cpu.pc) {
+                self.running = false;
+            }
+        } else {
+            let mut input = String::new();
+            io::stdin().read_line(&mut input);
+            let command: Vec<&str> = input.trim().split(' ').collect();
+
+            if command[0] == "ss" {
+                self.show_state = !self.show_state;
+                println!("Show State {}", self.show_state);
+            }
+            if command[0] == "sd" {
+                self.show_disassembly = !self.show_disassembly;
+                println!("Show Disassembly {}", self.show_disassembly);
+            }
+            if command[0] == "bp" {
+                match hex::decode(command[1]) {
+                    Ok(addr_vec) => {
+                        let hi = (addr_vec[0] as u16) << 8;
+                        let lo = addr_vec[1] as u16;
+                        let addr = hi | lo;
+                        self.breakpoints.insert(addr);
+                        println!("Breakpoint added 0x{:04x}", addr);
+                    },
+                    Err(e) => {}
+                }
+            }
+            if command[0] == "m" {
+                let addr = match hex::decode(command[1]) {
+                    Ok(addr_vec) => {
+                        let hi = (addr_vec[0] as u16) << 8;
+                        let lo = addr_vec[1] as u16;
+                        let addr = hi | lo;
+                        addr
+                    },
+                    Err(e) => {0_u16}
+                };
+
+                println!("{:04x}: {:02x} {:02x} {:02x} {:02x}",
+                    addr,
+                    mem.get_byte(addr),
+                    mem.get_byte(addr + 1),
+                    mem.get_byte(addr + 2),
+                    mem.get_byte(addr + 3),
+                );
+            }
+            if command[0] == "r" {
+                self.running = true;
+                println!("Running.");
+            }
+            if command[0] == "s" {
+                self.cpu_tick(cpu, mem);
+            }
+        }
+    }
+
+    fn cpu_tick(&self, cpu: &mut Cpu, mem: &mut Mem) {
+        if self.show_state {
+            println!("{}", cpu.state_string());
+        }
+
+        if self.show_disassembly {
+            self.disassemble(mem.get_byte(cpu.pc),
+                    mem.get_byte(cpu.pc + 1),
+                    mem.get_byte(cpu.pc + 2));
+        }
+
+        cpu.tick(mem);
     }
 
     pub fn disassemble(&self, b1: u8, b2: u8, b3: u8) {

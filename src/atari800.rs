@@ -3,6 +3,7 @@ use crate::mem::Mem;
 use crate::debugger::Debugger;
 
 pub struct Atari800 {
+    debugger : Debugger,
     mem : Mem,
     cpu : Cpu,
 }
@@ -10,6 +11,7 @@ pub struct Atari800 {
 impl Atari800 {
     pub fn new() -> Atari800 {
         let mut atari800 = Atari800 {
+            debugger : Debugger::new(),
             mem : Mem::new(),
             cpu : Cpu::new(),
         };
@@ -20,6 +22,7 @@ impl Atari800 {
     }
 
     pub fn tick(&mut self) {
-        self.cpu.tick(&mut self.mem);
+        self.debugger.tick(&mut self.cpu, &mut self.mem);
+        // self.cpu.tick(&mut self.mem);
     }
 }

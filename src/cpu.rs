@@ -1,4 +1,3 @@
-use crate::debugger::Debugger;
 use crate::mem::Mem;
 
 const STACK_BASE: u16 = 0x0100_u16;
@@ -16,22 +15,21 @@ const STATUS_CAR : u8 = 0x01_u8;
 
 pub struct Cpu {
     // Cpu registers and flags
-    pc : u16,
-    a : u8,
-    x : u8,
-    y : u8,
-    s : u8,
-    n : bool,
-    v : bool,
-    d : bool,
-    z : bool,
-    c : bool,
-    b : bool,
-    i : bool,
+    pub pc : u16,
+    pub a : u8,
+    pub x : u8,
+    pub y : u8,
+    pub s : u8,
+    pub n : bool,
+    pub v : bool,
+    pub d : bool,
+    pub z : bool,
+    pub c : bool,
+    pub b : bool,
+    pub i : bool,
 
     // Instruction dispatch table
     dispatch : [fn(&mut Cpu, &mut Mem); 256],
-    debugger : Debugger,
 }
 
 impl Cpu {
@@ -51,7 +49,6 @@ impl Cpu {
             b : false,
             i : false,
             dispatch : [Cpu::unimpl; 256],
-            debugger : Debugger::new(),
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -341,18 +338,14 @@ impl Cpu {
     }
 
     pub fn tick(&mut self, mem : &mut Mem) {
-        let pc = self.pc;
-        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} / n:{} v:{} b:{} d:{} i:{} z:{} c:{}",
-                self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8, self.b as i8,
-                self.d as i8, self.i as i8, self.z as i8, self.c as i8);
-
-        self.debugger.disassemble(mem.get_byte(self.pc),
-                mem.get_byte(self.pc + 1),
-                mem.get_byte(self.pc + 2));
-
         let opcode = self.fetch_byte(mem);
-
         self.dispatch[opcode as usize](self, mem);
+    }
+
+    pub fn state_string(&self) -> String {
+        format!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} / n:{} v:{} b:{} d:{} i:{} z:{} c:{}",
+                self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8, self.b as i8,
+                self.d as i8, self.i as i8, self.z as i8, self.c as i8)
     }
 
     pub fn unimpl(&mut self, mem : &mut Mem) {
@@ -430,7 +423,7 @@ impl Cpu {
     }
 
     fn fetch_addr_mode_izx(&mut self, mem : &mut Mem) -> u16 {
-        let addr = self.fetch_byte(mem) as u16 + self.x as u16;
+        let addr = self.fetch_byte(mem).wrapping_add(self.x) as u16;
         mem.get_word(addr)
     }
 
@@ -440,8 +433,8 @@ impl Cpu {
     }
 
     fn fetch_addr_mode_izy(&mut self, mem : &mut Mem) -> u16 {
-        let addr_i = self.fetch_byte(mem) as u16 + self.y as u16;
-        mem.get_word(addr_i)
+        let addr = self.fetch_byte(mem) as u16;
+        mem.get_word(addr).wrapping_add(addr)
     }
 
     fn fetch_val_mode_izy(&mut self, mem : &mut Mem) -> u8 {
@@ -457,8 +450,8 @@ impl Cpu {
     }
 
     fn fetch_addr_mode_ind(&mut self, mem : &mut Mem) -> u16 {
-        let addr_i = self.fetch_word(mem);
-        mem.get_word(addr_i)
+        let addr = self.fetch_word(mem);
+        mem.get_word(addr)
     }
 
     fn addr_stack(&mut self) -> u16 {
