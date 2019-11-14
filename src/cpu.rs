@@ -20,13 +20,13 @@ pub struct Cpu {
     a : u8,
     x : u8,
     y : u8,
-    // p : u8,
     s : u8,
     n : bool,
     v : bool,
     d : bool,
     z : bool,
     c : bool,
+    b : bool,
     i : bool,
 
     // Instruction dispatch table
@@ -48,6 +48,7 @@ impl Cpu {
             d : false,
             z : false,
             c : false,
+            b : false,
             i : false,
             dispatch : [Cpu::unimpl; 256],
             debugger : Debugger::new(),
@@ -341,9 +342,9 @@ impl Cpu {
 
     pub fn tick(&mut self, mem : &mut Mem) {
         let pc = self.pc;
-        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} n:{} v:{} d:{} z:{} c:{}",
-                self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8,
-                self.d as i8, self.z as i8, self.c as i8);
+        println!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} / n:{} v:{} b:{} d:{} i:{} z:{} c:{}",
+                self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8, self.b as i8,
+                self.d as i8, self.i as i8, self.z as i8, self.c as i8);
 
         self.debugger.disassemble(mem.get_byte(self.pc),
                 mem.get_byte(self.pc + 1),
@@ -467,9 +468,10 @@ impl Cpu {
     // 0x00, time 7
     fn op_brk(&mut self, mem : &mut Mem) {
         let addr = mem.get_word(VECTOR_IRQBRK);
-        let status = self.get_status();
-        self.i = false;
-        self.stack_push_word(mem, self.pc);
+        let status = self.get_status(true);
+        self.i = true;
+        self.b = true;
+        self.stack_push_word(mem, self.pc + 1);
         self.stack_push_byte(mem, status);
         self.pc = addr;
         // panic!("op_brk is not implemented");
@@ -515,7 +517,7 @@ impl Cpu {
 
     // 0x08, time 3
     fn op_php(&mut self, mem : &mut Mem) {
-        let status = self.get_status();
+        let status = self.get_status(true);
         self.stack_push_byte(mem, status);
     }
 
@@ -687,7 +689,7 @@ impl Cpu {
     // 0x28, time 4
     fn op_plp(&mut self, mem : &mut Mem) {
         let val = self.stack_pop_byte(mem);
-        self.set_status(val);
+        self.set_status(val, false);
     }
 
     // 0x29, time 2
@@ -927,8 +929,7 @@ impl Cpu {
 
     // 0x58, time 2
     fn op_cli(&mut self, mem : &mut Mem) {
-        // TODO
-        panic!("op_cli is not implemented");
+        self.i = false;
     }
 
     // 0x59, time 4+
@@ -1090,8 +1091,7 @@ impl Cpu {
 
     // 0x78, time 2
     fn op_sei(&mut self, mem : &mut Mem) {
-        // TODO
-        panic!("op_sei is not implemented");
+        self.i = true;
     }
 
     // 0x79, time 4+
@@ -2078,7 +2078,7 @@ impl Cpu {
         val
     }
 
-    fn get_status(&self) -> u8 {
+    fn get_status(&self, brk: bool) -> u8 {
         let mut st = STATUS_RES;
         if self.n {
             st = st | STATUS_NEG;
@@ -2086,18 +2086,16 @@ impl Cpu {
         if self.v {
             st = st | STATUS_OVR;
         }
-        // TODO : brk bit. Set for now to pass tests.
-        st = st | STATUS_BRK;
-
+        // if self.b {
+        if brk {
+            st = st | STATUS_BRK;
+        }
         if self.d {
             st = st | STATUS_DCM;
         }
-
-        // TODO : interrupt bit.
         if self.i {
             st = st | STATUS_INT;
         }
-
         if self.z {
             st = st | STATUS_ZER;
         }
@@ -2108,13 +2106,16 @@ impl Cpu {
         st
     }
 
-    fn set_status(&mut self, status: u8) {
+    fn set_status(&mut self, status: u8, affect_brk: bool) {
         // let mut st = STATUS_OVR;
 
         self.n = status & STATUS_NEG == STATUS_NEG;
         self.v = status & STATUS_OVR == STATUS_OVR;
+        if (affect_brk) {
+            self.b = status & STATUS_BRK == STATUS_BRK;
+        }
         self.d = status & STATUS_DCM == STATUS_DCM;
-        self.i = status & STATUS_INT == STATUS_INT; //?
+        self.i = status & STATUS_INT == STATUS_INT;
         self.z = status & STATUS_ZER == STATUS_ZER;
         self.c = status & STATUS_CAR == STATUS_CAR;
     }
