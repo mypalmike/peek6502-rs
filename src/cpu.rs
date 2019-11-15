@@ -1128,7 +1128,7 @@ impl Cpu {
 
     // 0x81, time 6
     fn op_sta_izx(&mut self, mem : &mut Mem) {
-        let addr = self.fetch_addr_mode_abx(mem);
+        let addr = self.fetch_addr_mode_izx(mem);
         self.sta(mem, addr);
     }
 
