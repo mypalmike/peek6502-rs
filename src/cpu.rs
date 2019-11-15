@@ -1956,10 +1956,10 @@ impl Cpu {
     }
 
     fn lsr_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
-        self.c = val & 0x01 != 0;
-        val >> 1;
-        self.compute_nz_val(val);
-        val
+        self.c = val & 0x01_u8 == 0x01u8;
+        let new_val = val >> 1;
+        self.compute_nz_val(new_val);
+        new_val
     }
 
     fn ora(&mut self, mem : &mut Mem, val : u8) {
@@ -1974,9 +1974,10 @@ impl Cpu {
     }
 
     fn rol_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
-        let (val2, overflow) = val.overflowing_shl(1);
+        let carry = val >= 0x80;
+        let val2 = val.wrapping_shl(1);
         let c = self.c;
-        self.c = overflow;
+        self.c = carry;
         let new_val = val2 | if c {0x01} else {0x00};
         self.compute_nz_val(new_val);
         new_val
@@ -1992,7 +1993,7 @@ impl Cpu {
         let new_c = val & 0x01 == 0x01;
         let val2 = val >> 1;
         let c = self.c;
-        let new_val = val2 | if c{0x80} else {0x00};
+        let new_val = val2 | if c {0x80} else {0x00};
         self.c = new_c;
         self.compute_nz_val(new_val);
         new_val
