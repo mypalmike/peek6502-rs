@@ -1826,9 +1826,10 @@ impl Cpu {
     }
 
     fn asl_val(&mut self, mem : &mut Mem, val: u8) -> u8 {
-        let (new_val, overflow) = val.overflowing_shl(1);
-        self.c = overflow;
-        self.compute_nz();
+        let carry = val >= 0x80;
+        let new_val = val.wrapping_shl(1);
+        self.c = carry;
+        self.compute_nz_val(new_val);
         new_val
     }
 
