@@ -124,9 +124,9 @@ impl Debugger {
 
                 // 0xE0 - 0xEF
                 (Op::CPX, Mode::IMM), (Op::SBC, Mode::IZX), (Op::NOP, Mode::IMP), (Op::ISC, Mode::IZX),
-                (Op::CPX, Mode::IMP), (Op::SBC, Mode::IZX), (Op::INC, Mode::IMP), (Op::ISC, Mode::IZX),
-                (Op::INX, Mode::IMP), (Op::SBC, Mode::IZX), (Op::NOP, Mode::IMP), (Op::SBC, Mode::IZX),
-                (Op::CPX, Mode::IMP), (Op::SBC, Mode::IZX), (Op::INC, Mode::IMP), (Op::ISC, Mode::IZX),
+                (Op::CPX, Mode::ZP),  (Op::SBC, Mode::ZP),  (Op::INC, Mode::ZP),  (Op::ISC, Mode::ZP),
+                (Op::INX, Mode::IMP), (Op::SBC, Mode::IMM), (Op::NOP, Mode::IMP), (Op::SBC, Mode::IMM),
+                (Op::CPX, Mode::ABS), (Op::SBC, Mode::ABS), (Op::INC, Mode::ABS), (Op::ISC, Mode::ABS),
 
                 // 0xF0 - 0xFF
                 (Op::BEQ, Mode::REL), (Op::SBC, Mode::IZY), (Op::HLT, Mode::IMP), (Op::ISC, Mode::IZY),

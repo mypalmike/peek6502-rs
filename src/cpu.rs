@@ -295,7 +295,7 @@ impl Cpu {
         new_cpu.dispatch[0xe3 as usize] = Cpu::op_isc_izx;
         new_cpu.dispatch[0xe4 as usize] = Cpu::op_cpx_zp;
         new_cpu.dispatch[0xe5 as usize] = Cpu::op_sbc_zp;
-        new_cpu.dispatch[0xe6 as usize] = Cpu::op_inc;
+        new_cpu.dispatch[0xe6 as usize] = Cpu::op_inc_zp;
         new_cpu.dispatch[0xe7 as usize] = Cpu::op_isc_zp;
         new_cpu.dispatch[0xe8 as usize] = Cpu::op_inx;
         new_cpu.dispatch[0xe9 as usize] = Cpu::op_sbc_imm;
@@ -1663,9 +1663,9 @@ impl Cpu {
     }
 
     // 0xe6, time 5
-    fn op_inc(&mut self, mem : &mut Mem) {
-        self.a = self.a.wrapping_add(1);
-        self.compute_nz_val(self.a);
+    fn op_inc_zp(&mut self, mem : &mut Mem) {
+        let addr = self.fetch_addr_mode_zp(mem);
+        self.inc(mem, addr);
     }
 
     // 0xe7, time 5
@@ -1914,7 +1914,7 @@ impl Cpu {
     fn dec(&mut self, mem : &mut Mem, addr: u16) {
         let val = mem.get_byte(addr);
         let new_val = val.wrapping_sub(1);
-        mem.set_byte(addr, val);
+        mem.set_byte(addr, new_val);
         self.compute_nz_val(new_val);
     }
 
@@ -1926,7 +1926,7 @@ impl Cpu {
     fn inc(&mut self, mem : &mut Mem, addr: u16) {
         let val = mem.get_byte(addr);
         let new_val = val.wrapping_add(1);
-        mem.set_byte(addr, val);
+        mem.set_byte(addr, new_val);
         self.compute_nz_val(new_val);
     }
 
