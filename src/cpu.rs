@@ -2010,8 +2010,8 @@ impl Cpu {
         let (mut u_sum, mut u_overflow) = self.a.overflowing_sub(val);
         let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
 
-        if self.c {
-            let(u_sumc, u_overflowc) = u_sum.overflowing_sub(1); // TODO ? add or sub here?
+        if !self.c {
+            let(u_sumc, u_overflowc) = u_sum.overflowing_sub(1);
             let(s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
 
             u_sum = u_sumc;
@@ -2019,7 +2019,7 @@ impl Cpu {
             s_overflow = s_overflow || s_overflowc;
         }
 
-        self.c = u_overflow;
+        self.c = !u_overflow;
         self.v = s_overflow;
         self.a = u_sum;
 
