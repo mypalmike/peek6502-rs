@@ -1790,8 +1790,10 @@ impl Cpu {
     // Implementations of core functionality once the address has been
     // computed
     fn adc(&mut self, mem : &mut Mem, val : u8) {
-        // TODO : Verify this
         // TODO : Deal with BCD mode
+        if self.d {
+            panic!("ADC not implemented in decimal mode");
+        }
 
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
@@ -1804,7 +1806,7 @@ impl Cpu {
 
             u_sum = u_sumc;
             u_overflow = u_overflow || u_overflowc;
-            s_overflow = s_overflow || s_overflowc;
+            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
         }
 
         self.c = u_overflow;
@@ -1893,6 +1895,7 @@ impl Cpu {
         // TODO : Remove this. This is used for running tests and detecting
         // failure.
         if (self.pc as i16).wrapping_add(-(addr as i16)) == 2 {
+            println!("{}", self.state_string());
             panic!("Encountered trap.");
         }
     }
@@ -2001,9 +2004,10 @@ impl Cpu {
 
     fn sbc(&mut self, mem : &mut Mem, val : u8) {
         // Note : Based on adc, keep in sync.
-        // TODO : Verify this
         // TODO : Deal with BCD mode
-
+        if self.d {
+            panic!("SBC not implemented in decimal mode");
+        }
 
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
@@ -2016,7 +2020,7 @@ impl Cpu {
 
             u_sum = u_sumc;
             u_overflow = u_overflow || u_overflowc;
-            s_overflow = s_overflow || s_overflowc;
+            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
         }
 
         self.c = !u_overflow;

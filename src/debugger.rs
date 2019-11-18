@@ -26,6 +26,7 @@ pub struct Debugger {
     show_state: bool,
     show_disassembly: bool,
     running: bool,
+    n_runs: u32,
     breakpoints: HashSet<u16>,
     opcodes: [(Op, Mode); 256],
 }
@@ -36,6 +37,7 @@ impl Debugger {
             show_state: false,
             show_disassembly: false,
             running: false,
+            n_runs: 0,
             breakpoints: HashSet::new(),
             opcodes: [
                 // 0x00 - 0x0F
@@ -141,7 +143,11 @@ impl Debugger {
         if self.running {
             self.cpu_tick(cpu, mem);
             if self.breakpoints.contains(&cpu.pc) {
-                self.running = false;
+                self.n_runs -= 1;
+                if self.n_runs == 0 {
+                    self.running = false;
+                    println!("Breakpoint at {:04x}", cpu.pc);
+                }
             }
         } else {
             let mut input = String::new();
@@ -188,8 +194,14 @@ impl Debugger {
                 );
             }
             if command[0] == "r" {
+                self.n_runs = 1;
                 self.running = true;
                 println!("Running.");
+            }
+            if command[0] == "f" {
+                self.n_runs = command[1].parse::<u32>().unwrap();
+                self.running = true;
+                println!("Forward {} times", self.n_runs);
             }
             if command[0] == "s" {
                 self.cpu_tick(cpu, mem);

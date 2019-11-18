@@ -13,18 +13,6 @@ impl Mem {
             rom : [0x00_u8; 1024],
         };
 
-        // a8000: lda #$05   ; A9 05
-        // a8002: adc #$06   ; 69 06
-        // a8004: tax        ; AA
-        // a8005: stx $0001  ; 86 01
-        // a8007: lda $0001  ; A5 01
-        // a8009: jmp a8009  ; 4C 09 80
-        // let commands : [u8; 12] = [0xa9, 0x05, 0x69, 0x06, 0xaa, 0x86, 0x01, 0xa5, 0x01, 0x4c, 0x09, 0x80];
-
-        // Initialize with some test 6502 code.
-        // new_mem.rom[0..].clone_from_slice(&commands);
-        // new_mem.rom[0..12].copy_from_slice(&commands);
-
         // Initialize with test code.
         let f = File::open("6502_functional_test.bin");
         let mut f = match f {
@@ -33,7 +21,6 @@ impl Mem {
         };
 
         let mut buffer = Vec::new();
-//        let mut buffer = [0_u8; 0x10000];
         f.read_to_end(&mut buffer);
 
         new_mem.ram[0..0x10000].copy_from_slice(&buffer);
@@ -71,17 +58,3 @@ impl Mem {
         self.set_byte(addr + 1, hi_byte);
     }
 }
-
-
-// fn test_simple() {
-//     // a8000: lda #$05   ; A9 05
-//     // a8002: adc #$06   ; 69 06
-//     // a8004: tax        ; AA
-//     // a8005: stx $0001  ; 86 01
-//     // a8007: lda $0001  ; A5 01
-//     // a8009: jmp a8009  ; 4C 09 80
-
-
-
-
-// }
