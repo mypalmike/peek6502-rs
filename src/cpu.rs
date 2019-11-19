@@ -1840,9 +1840,16 @@ impl Cpu {
 
         if lo > 9 {
             hi += 1;
+            lo -= 10;
         }
 
-        self.c = hi > 9;
+        if hi > 9 {
+            self.c = true;
+            hi -= 10;
+        } else {
+            self.c = false;
+        }
+
         self.v = self.adc_dec_compute_v(val);
         self.a = ((hi & 0x0f) << 4) | (lo & 0x0f);
 
