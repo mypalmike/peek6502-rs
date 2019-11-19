@@ -1790,11 +1790,14 @@ impl Cpu {
     // Implementations of core functionality once the address has been
     // computed
     fn adc(&mut self, mem : &mut Mem, val : u8) {
-        // TODO : Deal with BCD mode
         if self.d {
-            panic!("ADC not implemented in decimal mode");
+            self.adc_dec(mem, val);
+        } else {
+            self.adc_bin(mem, val);
         }
+    }
 
+    fn adc_bin(&mut self, mem : &mut Mem, val : u8) {
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
         let (mut u_sum, mut u_overflow) = self.a.overflowing_add(val);
@@ -1812,6 +1815,37 @@ impl Cpu {
         self.c = u_overflow;
         self.v = s_overflow;
         self.a = u_sum;
+
+        // Z is valid, N is invalid but reportedly computed the same as binary.
+        self.compute_nz();
+    }
+
+    fn adc_dec_compute_v(&mut self, val: u8) -> bool {
+        // v is "undefined" but is reported to act as if in binary mode.
+        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
+        if self.c {
+            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
+            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
+        }
+
+        s_overflow
+    }
+
+    fn adc_dec(&mut self, mem : &mut Mem, val : u8) {
+        let mut lo = (self.a & 0x0f) + (val & 0x0f);
+        let mut hi = ((self.a & 0xf0) >> 4) + ((val & 0xf0) >> 4);
+
+        if self.c {
+            lo += 1;
+        }
+
+        if lo > 9 {
+            hi += 1;
+        }
+
+        self.c = hi > 9;
+        self.v = self.adc_dec_compute_v(val);
+        self.a = ((hi & 0x0f) << 4) | (lo & 0x0f);
 
         self.compute_nz();
     }
@@ -2006,9 +2040,13 @@ impl Cpu {
         // Note : Based on adc, keep in sync.
         // TODO : Deal with BCD mode
         if self.d {
-            panic!("SBC not implemented in decimal mode");
+            self.sbc_dec(mem, val);
+        } else {
+            self.sbc_bin(mem, val);
         }
+    }
 
+    fn sbc_bin(&mut self, mem : &mut Mem, val : u8) {
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
         let (mut u_sum, mut u_overflow) = self.a.overflowing_sub(val);
@@ -2028,6 +2066,36 @@ impl Cpu {
         self.a = u_sum;
 
         self.compute_nz();
+    }
+
+    fn sbc_dec(&mut self, mem : &mut Mem, val : u8) {
+        let mut lo = (self.a & 0x0f).wrapping_sub(val & 0x0f);
+        let mut hi = ((self.a & 0xf0) >> 4).wrapping_sub((val & 0xf0) >> 4);
+
+        if !self.c {
+            lo = lo.wrapping_sub(1);
+        }
+
+        if lo & 0x80 == 0x80 {
+            lo = lo.wrapping_add(10);
+            hi = hi.wrapping_sub(1);
+        }
+
+        self.c = hi & 0x80 == 0x80;
+        self.v = self.sbc_dec_compute_v(val);
+        self.a = ((hi & 0x0f) << 4) | (lo & 0x0f);
+
+        self.compute_nz();
+    }
+
+    fn sbc_dec_compute_v(&self, val: u8) -> bool {
+        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
+        if !self.c {
+            let(s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
+            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
+        }
+
+        s_overflow
     }
 
     fn sta(&mut self, mem : &mut Mem, addr : u16) {
