@@ -1819,17 +1819,6 @@ impl Cpu {
         self.compute_nz();
     }
 
-    fn adc_dec_compute_v(&mut self, val: u8) -> bool {
-        // v is "undefined" but is reported to act as if in binary mode.
-        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
-        if self.c {
-            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
-            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
-        }
-
-        s_overflow
-    }
-
     fn adc_dec(&mut self, mem : &mut Mem, val : u8) {
         let mut lo = (self.a & 0x0f) + (val & 0x0f);
         let mut hi = ((self.a & 0xf0) >> 4) + ((val & 0xf0) >> 4);
@@ -1854,6 +1843,17 @@ impl Cpu {
         self.a = ((hi & 0x0f) << 4) | (lo & 0x0f);
 
         self.compute_nz();
+    }
+
+    fn adc_dec_compute_v(&mut self, val: u8) -> bool {
+        // v is "undefined" but is reported to act as if in binary mode.
+        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
+        if self.c {
+            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
+            s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
+        }
+
+        s_overflow
     }
 
     fn and(&mut self, mem : &mut Mem, val : u8) {
@@ -2083,11 +2083,17 @@ impl Cpu {
         }
 
         if lo & 0x80 == 0x80 {
-            lo = lo.wrapping_add(10);
             hi = hi.wrapping_sub(1);
+            lo = lo.wrapping_add(10);
         }
 
-        self.c = hi & 0x80 == 0x80;
+        if hi & 0x80 == 0x80 {
+            self.c = false;
+            hi = hi.wrapping_add(10);
+        } else {
+            self.c = true;
+        }
+
         self.v = self.sbc_dec_compute_v(val);
         self.a = ((hi & 0x0f) << 4) | (lo & 0x0f);
 

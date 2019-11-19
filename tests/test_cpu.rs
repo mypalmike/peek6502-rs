@@ -125,3 +125,65 @@ fn test_adc_dec() {
     assert_eq!(cpu.z, true);
     assert_eq!(cpu.c, true);
 }
+
+#[test]
+fn test_sbc_dec() {
+    let (mut cpu, mut mem) = get_cpu_mem();
+
+    let code: [u8; 6] = [
+        0xF8,           // SED
+        0xA9, 0x25,     // LDA #$25
+        0x18,           // CLC
+        0xEB, 0x85      // SBC #$85
+    ];
+    let halted = run(&mut cpu, &mut mem, &code, 100);
+    assert_eq!(cpu.a, 0x39);
+    assert_eq!(cpu.z, false);
+    assert_eq!(cpu.c, false);
+
+    let code: [u8; 6] = [
+        0xF8,           // SED
+        0xA9, 0x25,     // LDA #$25
+        0x38,           // SEC
+        0xEB, 0x85      // SBC #$85
+    ];
+    let halted = run(&mut cpu, &mut mem, &code, 100);
+    assert_eq!(cpu.a, 0x40);
+    assert_eq!(cpu.z, false);
+    assert_eq!(cpu.c, false);
+
+    let code: [u8; 6] = [
+        0xF8,           // SED
+        0xA9, 0x85,     // LDA #$85
+        0x38,           // SEC
+        0xEB, 0x22      // SBC #$22
+    ];
+    let halted = run(&mut cpu, &mut mem, &code, 100);
+    assert_eq!(cpu.a, 0x63);
+    assert_eq!(cpu.z, false);
+    assert_eq!(cpu.c, true);
+
+    let code: [u8; 6] = [
+        0xF8,           // SED
+        0xA9, 0x75,     // LDA #$75
+        0x38,           // SEC
+        0xEB, 0x75      // SBC #$75
+    ];
+    let halted = run(&mut cpu, &mut mem, &code, 100);
+    assert!(halted);
+    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.z, true);
+    assert_eq!(cpu.c, true);
+
+    let code: [u8; 6] = [
+        0xF8,           // SED
+        0xA9, 0x00,     // LDA #$00
+        0x18,           // CLC
+        0xEB, 0x99      // SBC #$99
+    ];
+    let halted = run(&mut cpu, &mut mem, &code, 100);
+    assert!(halted);
+    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.z, true);
+    assert_eq!(cpu.c, false);
+}
