@@ -39,8 +39,7 @@ impl Cpu {
             a : 0x00,
             x : 0x00,
             y : 0x00,
-            // p : 0x00,
-            s : 0xff, // 0xfd, ??
+            s : 0xff,
             n : false,
             v : false,
             d : false,

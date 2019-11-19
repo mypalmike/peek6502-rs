@@ -12,7 +12,7 @@ impl Atari800 {
     pub fn new() -> Atari800 {
         let mut atari800 = Atari800 {
             debugger : Debugger::new(),
-            mem : Mem::new(),
+            mem : Mem::new(0, true),
             cpu : Cpu::new(),
         };
 
