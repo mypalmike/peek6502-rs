@@ -1,13 +1,4 @@
-use std::collections::HashSet;
-use std::io;
-use std::rc::Rc;
-use std::cell::RefCell;
 
-use crate::cpu::Cpu;
-use crate::addressable::Addressable;
-use crate::mem::Mem;
-
-extern crate hex;
 
 
 #[derive(Clone, Copy, Debug)]
@@ -21,28 +12,22 @@ pub enum Op {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Mode {
+pub enum AddrMode {
     ABS, ABX, ABY, IMM, IMP, IND, IZX, IZY, REL, ZP, ZPA, ZPX, ZPY,
 }
 
-pub struct Debugger {
-    show_state: bool,
-    show_disassembly: bool,
-    running: bool,
-    n_runs: u32,
-    breakpoints: HashSet<u16>,
-    opcodes: [(Op, Mode); 256],
+pub enum AccessType {
+    CUSTOM, READ, WRITE, MODIFY,
 }
 
-impl Debugger {
-    pub fn new() -> Debugger {
-        Debugger {
-            show_state: false,
-            show_disassembly: false,
-            running: false,
-            n_runs: 0,
-            breakpoints: HashSet::new(),
-            opcodes: [
+pub struct CpuTable {
+    pub opcode_info: [(Op, Mode); 256],
+}
+
+impl CpuTable {
+    pub fn new() -> CpuTable {
+        CpuTable {
+            opcode_info: [
                 // 0x00 - 0x0F
                 (Op::BRK, Mode::IMP), (Op::ORA, Mode::IZX), (Op::HLT, Mode::IMP), (Op::SLO, Mode::IZX),
                 (Op::NOP, Mode::ZP),  (Op::ORA, Mode::ZP),  (Op::ASL, Mode::ZP),  (Op::SLO, Mode::ZP),
@@ -142,114 +127,22 @@ impl Debugger {
         }
     }
 
-    pub fn tick(&mut self, cpu: &mut Cpu, mem: &mut Mem) {
-        if self.running {
-            self.cpu_tick(cpu, mem);
-            if self.breakpoints.contains(&cpu.pc) {
-                self.n_runs -= 1;
-                if self.n_runs == 0 {
-                    self.running = false;
-                    println!("Breakpoint at {:04x}", cpu.pc);
-                }
-            }
-        } else {
-            let mut input = String::new();
-            io::stdin().read_line(&mut input);
-            let command: Vec<&str> = input.trim().split(' ').collect();
+    pub fn access_type(&self, op: Op) => AccessType {
+        match op {
+            Op.LDA | Op.LDX | Op.LDY | Op.EOR | Op.AND | Op.ORA |
+            Op.ADC | Op.SBC | Op.CMP | Op.BIT | Op.LAX | Op.LAE |
+            Op.SHS | Op.NOP
+            => AccessType.READ,
 
-            if command[0] == "ss" {
-                self.show_state = !self.show_state;
-                println!("Show State {}", self.show_state);
-            }
-            if command[0] == "sd" {
-                self.show_disassembly = !self.show_disassembly;
-                println!("Show Disassembly {}", self.show_disassembly);
-            }
-            if command[0] == "bp" {
-                match hex::decode(command[1]) {
-                    Ok(addr_vec) => {
-                        let hi = (addr_vec[0] as u16) << 8;
-                        let lo = addr_vec[1] as u16;
-                        let addr = hi | lo;
-                        self.breakpoints.insert(addr);
-                        println!("Breakpoint added 0x{:04x}", addr);
-                    },
-                    Err(e) => {}
-                }
-            }
-            if command[0] == "m" {
-                let addr = match hex::decode(command[1]) {
-                    Ok(addr_vec) => {
-                        let hi = (addr_vec[0] as u16) << 8;
-                        let lo = addr_vec[1] as u16;
-                        let addr = hi | lo;
-                        addr
-                    },
-                    Err(e) => {0_u16}
-                };
+            Op.STA | Op.STX | Op.STY | Op.SHA | Op.SHX | Op.SHY
+            => AccessType.WRITE,
 
-                println!("{:04x}: {:02x} {:02x} {:02x} {:02x}",
-                    addr,
-                    mem.get_byte(addr),
-                    mem.get_byte(addr + 1),
-                    mem.get_byte(addr + 2),
-                    mem.get_byte(addr + 3),
-                );
-            }
-            if command[0] == "r" {
-                self.n_runs = 1;
-                self.running = true;
-                println!("Running.");
-            }
-            if command[0] == "f" {
-                self.n_runs = command[1].parse::<u32>().unwrap();
-                self.running = true;
-                println!("Forward {} times", self.n_runs);
-            }
-            if command[0] == "s" {
-                self.cpu_tick(cpu, mem);
-            }
+            Op.ASL | Op.LSR | Op.ROL | Op.ROR | Op.INC | Op.DEC |
+            Op.SLO | Op.SRE | Op.RLA | Op.RRA | Op.ISB | Op.DCP
+            => AccessType.MODIFY,
+
+            _ => AccessType.CUSTOM,
         }
-    }
-
-    fn cpu_tick(&self, cpu: &mut Cpu, mem: &mut Mem) {
-        if self.show_state {
-            println!("{}", cpu.state_string());
-        }
-
-        if self.show_disassembly {
-            self.disassemble(mem.get_byte(cpu.pc),
-                    mem.get_byte(cpu.pc + 1),
-                    mem.get_byte(cpu.pc + 2));
-        }
-
-        cpu.tick(mem);
-    }
-
-    pub fn disassemble(&self, b1: u8, b2: u8, b3: u8) {
-        let opcode = b1;
-        let (op, mode) = self.opcodes[opcode as usize];
-
-        let disasm = match mode {
-            Mode::ABS => format!("{:?} ${:02x}{:02x}", op, b3, b2),
-            Mode::ABX => format!("{:?} ${:02x}{:02x},X", op, b3, b2),
-            Mode::ABY => format!("{:?} ${:02x}{:02x},Y", op, b3, b2),
-            Mode::IMM => format!("{:?} #${:02x}", op, b2),
-            Mode::IMP => format!("{:?}", op),
-            Mode::IND => format!("{:?} (${:02x}{:02x})", op, b3, b2),
-            Mode::IZX => format!("{:?} (${:02x},X)", op, b2),
-            Mode::IZY => format!("{:?} (${:02x}),Y", op, b2),
-            Mode::REL => format!("{:?} ${:02x}", op, b2),
-            Mode::ZP => format!("{:?} ${:02x}", op, b2),
-            Mode::ZPX => format!("{:?} ${:02x},X", op, b2),
-            Mode::ZPY => format!("{:?} ${:02x},Y", op, b2),
-            _ => String::from("???"),
-        };
-
-        println!("{}", disasm);
     }
 }
 
-pub fn debugger_tick(debugger: Rc<RefCell<Debugger>>, cpu: Rc<RefCell<Cpu>>, mem: Rc<RefCell<Mem>>) {
-    debugger.borrow_mut().tick(&mut cpu.borrow_mut(), &mut mem.borrow_mut());
-}

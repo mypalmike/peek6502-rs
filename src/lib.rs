@@ -1,4 +1,9 @@
+pub mod addressable;
+pub mod antic;
 pub mod atari800;
 pub mod cpu;
+pub mod cpu_pins;
 pub mod debugger;
 pub mod mem;
+pub mod mem_controller;
+pub mod display;
