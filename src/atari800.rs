@@ -24,7 +24,6 @@ pub struct Atari800 {
     // Cycle tracking
     master_cycle: u64,
     cpu_halted: bool,
-    cpu_cycles_remaining: u8,
 }
 
 impl Atari800 {
@@ -39,7 +38,6 @@ impl Atari800 {
             debugger: Debugger::new(),
             master_cycle: 0,
             cpu_halted: false,
-            cpu_cycles_remaining: 0,
         };
 
         // Reset CPU after construction
@@ -79,18 +77,13 @@ impl Atari800 {
             // ANTIC is using the bus - CPU is halted
             self.cpu_halted = true;
         } else {
-            // CPU can execute
+            // CPU can execute - executes one cycle
             self.cpu_halted = false;
-            if self.cpu_cycles_remaining == 0 {
-                // Start new instruction
-                // Use mem::replace to temporarily take ownership of CPU
-                let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
-                self.cpu_cycles_remaining = cpu.tick(self) - 1;
-                self.cpu = cpu;
-            } else {
-                // Continue current instruction (multi-cycle)
-                self.cpu_cycles_remaining -= 1;
-            }
+
+            // Use mem::replace to temporarily take ownership of CPU
+            let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+            cpu.tick(self);  // CPU now tracks its own multi-cycle state
+            self.cpu = cpu;
         }
 
         // GTIA always runs (generates video)

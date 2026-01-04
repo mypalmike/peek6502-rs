@@ -37,10 +37,13 @@ fn run(cpu: &mut Cpu, bus: &mut TestBus, code: &[u8], max_ticks: i32) -> bool {
     bus.mem.ram[0x0800..(0x0800 + code.len())].copy_from_slice(code);
     bus.mem.ram[0x0800 + code.len()] = 0x00;
     cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;  // Ensure we start a new instruction
 
     for _ in 0..max_ticks {
-        cpu.tick(bus);
-        if bus.read(cpu.pc) == 0 {
+        cpu.tick(bus);  // Now executes one cycle at a time
+
+        // Check if we're ready to start a new instruction and it's BRK
+        if cpu.cycles_remaining == 0 && bus.read(cpu.pc) == 0 {
             return true;
         }
     }

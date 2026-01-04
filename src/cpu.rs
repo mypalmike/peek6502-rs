@@ -30,6 +30,11 @@ pub struct Cpu {
 
     // Instruction dispatch table
     dispatch : [fn(&mut Cpu, &mut dyn Bus); 256],
+
+    // Cycle timing infrastructure
+    cycle_table: [u8; 256],        // Base cycle counts for each opcode
+    pub cycles_remaining: u8,       // Cycles left in current instruction
+    current_opcode: u8,             // Currently executing opcode
 }
 
 impl Cpu {
@@ -48,6 +53,9 @@ impl Cpu {
             b : false,
             i : false,
             dispatch : [Cpu::unimpl; 256],
+            cycle_table: [0; 256],  // Will be initialized below
+            cycles_remaining: 0,
+            current_opcode: 0,
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -322,6 +330,28 @@ impl Cpu {
         new_cpu.dispatch[0xfe as usize] = Cpu::op_inc_abx;
         new_cpu.dispatch[0xff as usize] = Cpu::op_isc_abx;
 
+        // Initialize cycle timing table
+        // Timing extracted from instruction comments
+        // 0 cycles indicates HLT or unimplemented opcodes
+        new_cpu.cycle_table = [
+            7, 6, 0, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6,  // 0x00-0x0F
+            2, 5, 0, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,  // 0x10-0x1F
+            6, 6, 0, 7, 3, 3, 5, 5, 4, 2, 2, 0, 4, 4, 6, 6,  // 0x20-0x2F
+            2, 5, 0, 8, 0, 4, 6, 6, 2, 4, 0, 7, 0, 4, 7, 7,  // 0x30-0x3F
+            6, 6, 0, 8, 0, 3, 5, 5, 3, 2, 2, 2, 3, 4, 6, 6,  // 0x40-0x4F
+            2, 5, 0, 8, 0, 4, 6, 6, 2, 4, 0, 7, 0, 4, 7, 7,  // 0x50-0x5F
+            6, 6, 0, 8, 0, 3, 5, 5, 4, 2, 2, 2, 5, 4, 6, 6,  // 0x60-0x6F
+            2, 5, 0, 8, 0, 4, 6, 6, 2, 4, 0, 7, 0, 4, 7, 7,  // 0x70-0x7F
+            0, 6, 0, 0, 3, 3, 3, 3, 2, 0, 2, 2, 4, 4, 4, 4,  // 0x80-0x8F
+            2, 6, 0, 6, 4, 4, 4, 4, 2, 5, 2, 5, 5, 5, 5, 5,  // 0x90-0x9F
+            2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4,  // 0xA0-0xAF
+            2, 5, 0, 5, 4, 4, 4, 4, 2, 4, 2, 4, 4, 4, 4, 4,  // 0xB0-0xBF
+            2, 6, 0, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,  // 0xC0-0xCF
+            2, 5, 0, 8, 0, 4, 6, 6, 2, 4, 0, 7, 0, 4, 7, 7,  // 0xD0-0xDF
+            2, 6, 0, 8, 3, 3, 5, 5, 2, 2, 0, 0, 4, 4, 6, 6,  // 0xE0-0xEF
+            2, 5, 0, 8, 0, 4, 6, 6, 2, 4, 0, 7, 0, 4, 7, 7,  // 0xF0-0xFF
+        ];
+
         new_cpu
     }
 
@@ -337,17 +367,44 @@ impl Cpu {
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {
-        let opcode = self.fetch_byte(bus);
-        self.dispatch[opcode as usize](self, bus);
-        // TODO: Return actual cycle count per instruction
-        // For now, return a default of 2 cycles
-        2
+        if self.cycles_remaining == 0 {
+            // Start new instruction
+            self.current_opcode = self.fetch_byte(bus);
+
+            // Get base cycle count from table
+            self.cycles_remaining = self.cycle_table[self.current_opcode as usize];
+
+            // Execute the instruction (may add extra cycles for page crossings)
+            self.dispatch[self.current_opcode as usize](self, bus);
+
+            // Consume one cycle for instruction fetch/execution start
+            if self.cycles_remaining > 0 {
+                self.cycles_remaining -= 1;
+            }
+            return 1;
+        } else {
+            // Continue multi-cycle instruction
+            self.cycles_remaining -= 1;
+            return 1;
+        }
     }
 
     pub fn state_string(&self) -> String {
         format!("pc:{:04x} a:{:02x} x:{:02x} y:{:02x} s:{:02x} / n:{} v:{} b:{} d:{} i:{} z:{} c:{}",
                 self.pc, self.a, self.x, self.y, self.s, self.n as i8, self.v as i8, self.b as i8,
                 self.d as i8, self.i as i8, self.z as i8, self.c as i8)
+    }
+
+    /// Check if adding offset to base address crosses a page boundary
+    fn crosses_page_boundary(&self, base: u16, offset: u8) -> bool {
+        let result = base.wrapping_add(offset as u16);
+        (base & 0xFF00) != (result & 0xFF00)
+    }
+
+    /// Check if branch target crosses page boundary from current PC
+    fn branch_crosses_page(&self, offset: i8) -> bool {
+        let target = self.pc.wrapping_add(offset as i16 as u16);
+        (self.pc & 0xFF00) != (target & 0xFF00)
     }
 
     pub fn unimpl(&mut self, bus: &mut dyn Bus) {
