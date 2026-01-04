@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 
-use crate::mem::Mem;
+use crate::bus::Bus;
 use crate::cpu::Cpu;
 
 extern crate hex;
@@ -139,9 +139,9 @@ impl Debugger {
         }
     }
 
-    pub fn tick(&mut self, cpu: &mut Cpu, mem: &mut Mem) {
+    pub fn tick(&mut self, cpu: &mut Cpu, bus: &mut dyn Bus) {
         if self.running {
-            self.cpu_tick(cpu, mem);
+            self.cpu_tick(cpu, bus);
             if self.breakpoints.contains(&cpu.pc) {
                 self.n_runs -= 1;
                 if self.n_runs == 0 {
@@ -187,10 +187,10 @@ impl Debugger {
 
                 println!("{:04x}: {:02x} {:02x} {:02x} {:02x}",
                     addr,
-                    mem.get_byte(addr),
-                    mem.get_byte(addr + 1),
-                    mem.get_byte(addr + 2),
-                    mem.get_byte(addr + 3),
+                    bus.read(addr),
+                    bus.read(addr + 1),
+                    bus.read(addr + 2),
+                    bus.read(addr + 3),
                 );
             }
             if command[0] == "r" {
@@ -204,23 +204,23 @@ impl Debugger {
                 println!("Forward {} times", self.n_runs);
             }
             if command[0] == "s" {
-                self.cpu_tick(cpu, mem);
+                self.cpu_tick(cpu, bus);
             }
         }
     }
 
-    fn cpu_tick(&self, cpu: &mut Cpu, mem: &mut Mem) {
+    fn cpu_tick(&self, cpu: &mut Cpu, bus: &mut dyn Bus) {
         if self.show_state {
             println!("{}", cpu.state_string());
         }
 
         if self.show_disassembly {
-            self.disassemble(mem.get_byte(cpu.pc),
-                    mem.get_byte(cpu.pc + 1),
-                    mem.get_byte(cpu.pc + 2));
+            self.disassemble(bus.read(cpu.pc),
+                    bus.read(cpu.pc + 1),
+                    bus.read(cpu.pc + 2));
         }
 
-        cpu.tick(mem);
+        cpu.tick(bus);
     }
 
     pub fn disassemble(&self, b1: u8, b2: u8, b3: u8) {
