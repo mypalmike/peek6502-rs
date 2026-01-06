@@ -1,3 +1,5 @@
+use crate::framebuffer::Framebuffer;
+
 /// GTIA - Graphics Television Interface Adaptor
 /// Generates video output, handles player/missile graphics, and collision detection.
 ///
@@ -41,6 +43,9 @@ pub struct Gtia {
     // Current pixel position
     pixel_x: u16,
     pixel_y: u16,
+
+    // Framebuffer - GTIA owns the final pixel output
+    pub framebuffer: Framebuffer,
 }
 
 impl Gtia {
@@ -73,6 +78,7 @@ impl Gtia {
             trig: [1; 4],   // 1 = not pressed
             pixel_x: 0,
             pixel_y: 0,
+            framebuffer: Framebuffer::new(320, 192),
         }
     }
 
@@ -120,15 +126,9 @@ impl Gtia {
             0x11 => self.trig[1],
             0x12 => self.trig[2],
             0x13 => self.trig[3],
-            // Playfield colors (write-only on real hardware, but readable in emulator)
-            0x16 => self.colpf[0],
-            0x17 => self.colpf[1],
-            0x18 => self.colpf[2],
-            0x19 => self.colpf[3],
-            0x1A => self.colbk,
             // Console switches
             0x1F => self.consol,
-            // Other write-only registers return 0xFF
+            // Color registers (0x16-0x1A) and other write-only registers return 0xFF
             _ => 0xFF,
         }
     }
@@ -186,6 +186,54 @@ impl Gtia {
         // Atari NTSC color palette (simplified approximation)
         // This is a basic palette - real hardware varies based on NTSC artifacts
         ATARI_PALETTE[((hue as usize) << 3) | (lum as usize)]
+    }
+
+    /// Clear framebuffer to background color
+    /// Called at the start of each frame
+    pub fn clear_framebuffer(&mut self) {
+        let (r, g, b) = self.color_to_rgb(self.colbk);
+        self.framebuffer.clear_color(r, g, b);
+    }
+
+    /// Colorize an ANTIC scanline and write to framebuffer
+    /// Called once per scanline during frame rendering
+    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384]) {
+        for x in 0..320 {
+            let color_index = antic_pixels[x];
+            let (r, g, b) = self.get_color_for_index(color_index);
+            self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+        }
+    }
+
+    /// Get RGB color for a color index (0-3)
+    /// Private method - accesses color registers directly without read_register() hack
+    fn get_color_for_index(&self, index: u8) -> (u8, u8, u8) {
+        let atari_color = match index {
+            0 => self.colbk,           // Background
+            1 => self.colpf[0],        // Playfield 0
+            2 => self.colpf[1],        // Playfield 1
+            3 => self.colpf[2],        // Playfield 2
+            _ => self.colbk,           // Fallback
+        };
+        self.color_to_rgb(atari_color)
+    }
+
+    /// Save framebuffer as PPM image file
+    pub fn save_framebuffer(&self, filename: &str) -> std::io::Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let mut file = File::create(filename)?;
+
+        // PPM header
+        writeln!(file, "P6")?;
+        writeln!(file, "{} {}", self.framebuffer.width, self.framebuffer.height)?;
+        writeln!(file, "255")?;
+
+        // Write RGB pixel data
+        file.write_all(&self.framebuffer.pixels)?;
+
+        Ok(())
     }
 }
 

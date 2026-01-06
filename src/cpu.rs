@@ -355,15 +355,45 @@ impl Cpu {
         new_cpu
     }
 
+    /// Reset the CPU - reads initial PC from reset vector
     pub fn reset(&mut self, bus: &mut dyn Bus) {
-        // 6502 starts with pc pointed at value found in memory at 0xfffc
-        // self.pc = bus.read_word(0xfffc_u16);
+        // 6502 reset sequence:
+        // - Read PC from reset vector at $FFFC/$FFFD
+        // - Set I flag (interrupts disabled)
+        // - Stack pointer set to $FD (after dummy pushes)
 
+        self.pc = bus.read_word(VECTOR_RESET);
+        self.i = true;
+        self.s = 0xFD;
+    }
 
-        // Test code.
-        // From https://github.com/Klaus2m5/6502_65C02_functional_tests/blob/master/6502_functional_test.a65
-        self.pc = 0x0400_u16
-        // self.pc = 0x0594_u16;
+    /// Trigger Non-Maskable Interrupt (NMI)
+    /// Used for Vertical Blank Interrupt (VBI) and other critical interrupts
+    pub fn nmi(&mut self, bus: &mut dyn Bus) {
+        // NMI sequence (7 cycles):
+        // 1. Push PCH to stack
+        // 2. Push PCL to stack
+        // 3. Push status (with B=0, bit 5=1) to stack
+        // 4. Set I flag
+        // 5-6. Read NMI vector from $FFFA/$FFFB
+        // 7. Jump to handler
+
+        // Push PC (high byte first)
+        self.stack_push_byte(bus, (self.pc >> 8) as u8);
+        self.stack_push_byte(bus, (self.pc & 0xFF) as u8);
+
+        // Push status register (B flag clear, bit 5 set)
+        let status = self.get_status(false);  // false = B flag clear for NMI
+        self.stack_push_byte(bus, status);
+
+        // Set I flag (disable normal interrupts during NMI handling)
+        self.i = true;
+
+        // Load PC from NMI vector
+        self.pc = bus.read_word(VECTOR_NMI);
+
+        // NMI takes 7 cycles
+        self.cycles_remaining = 7;
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {

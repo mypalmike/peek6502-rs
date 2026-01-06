@@ -6,7 +6,6 @@ use crate::antic::Antic;
 use crate::gtia::Gtia;
 use crate::pokey::Pokey;
 use crate::pia::Pia;
-use crate::framebuffer::Framebuffer;
 
 pub struct Atari800 {
     // Core components
@@ -15,15 +14,12 @@ pub struct Atari800 {
 
     // Custom chips
     antic: Antic,
-    gtia: Gtia,
+    pub gtia: Gtia,  // Public for SDL access to framebuffer
     pokey: Pokey,
     pia: Pia,
 
     // Debugger
     debugger: Debugger,
-
-    // Display
-    pub framebuffer: Framebuffer,
 
     // Cycle tracking
     master_cycle: u64,
@@ -40,16 +36,15 @@ impl Atari800 {
             pokey: Pokey::new(),
             pia: Pia::new(),
             debugger: Debugger::new(),
-            framebuffer: Framebuffer::new(320, 192),  // 40 chars × 8 pixels = 320, 24 lines × 8 = 192
             master_cycle: 0,
             cpu_halted: false,
         };
 
-        // Reset CPU after construction
-        // We can't call reset with &mut atari800 due to borrow checker,
-        // so we'll just set the PC manually for now
-        // TODO: Load PC from reset vector at 0xFFFC
-        atari800.cpu.pc = 0x0400; // Functional test start address
+        // Reset CPU after construction to load PC from reset vector
+        // Use mem::replace to temporarily take ownership of CPU
+        let mut cpu = std::mem::replace(&mut atari800.cpu, Cpu::new());
+        cpu.reset(&mut atari800);  // atari800 implements Bus
+        atari800.cpu = cpu;
 
         // Set up test pattern
         atari800.setup_test_pattern();
@@ -202,48 +197,33 @@ impl Atari800 {
     /// Render one complete frame using ANTIC display list processing
     /// This simulates one full frame (192 visible scanlines for our simplified display)
     pub fn render(&mut self) {
-        // Get background and foreground colors from GTIA
-        let bg_color = self.gtia.color_to_rgb(self.gtia.read_register(0xD01A));  // COLBK
-        let fg_color = self.gtia.color_to_rgb(self.gtia.read_register(0xD016));  // COLPF0
-
         // Clear framebuffer to background color
-        self.framebuffer.clear_color(bg_color.0, bg_color.1, bg_color.2);
+        self.gtia.clear_framebuffer();
 
-        // Process each scanline through ANTIC
+        // Process each scanline through ANTIC and GTIA
         for scanline in 0..192 {
-            // Let ANTIC process this scanline using the display list
+            // ANTIC generates color indices from display list
             self.antic.process_scanline(&self.mem);
 
-            // Convert ANTIC's scanline buffer to RGB and write to framebuffer
-            for x in 0..320 {
-                let color_index = self.antic.scanline_buffer[x];
-                let (r, g, b) = match color_index {
-                    0 => bg_color,  // Background
-                    1 => fg_color,  // Foreground
-                    _ => bg_color,  // Fallback
-                };
-
-                self.framebuffer.set_pixel(x, scanline, r, g, b);
-            }
+            // GTIA colorizes and writes to framebuffer
+            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer);
         }
     }
 
     /// Save framebuffer as PPM image file
+    /// Delegates to GTIA which owns the framebuffer
     pub fn save_framebuffer(&self, filename: &str) -> std::io::Result<()> {
-        use std::fs::File;
-        use std::io::Write;
+        self.gtia.save_framebuffer(filename)
+    }
 
-        let mut file = File::create(filename)?;
-
-        // PPM header
-        writeln!(file, "P6")?;
-        writeln!(file, "{} {}", self.framebuffer.width, self.framebuffer.height)?;
-        writeln!(file, "255")?;
-
-        // Write RGB pixel data
-        file.write_all(&self.framebuffer.pixels)?;
-
-        Ok(())
+    /// Trigger Vertical Blank Interrupt (VBI)
+    /// Should be called after each frame render
+    /// This is essential for Atari OS and most software to function
+    pub fn trigger_vbi(&mut self) {
+        // Use mem::replace to temporarily take ownership of CPU
+        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+        cpu.nmi(self);  // self implements Bus
+        self.cpu = cpu;
     }
 }
 
