@@ -2,6 +2,7 @@ pub mod atari800;
 pub mod bus;
 pub mod cpu;
 pub mod debugger;
+pub mod framebuffer;
 pub mod functional_test;
 pub mod mem;
 pub mod antic;

@@ -6,6 +6,7 @@ use crate::antic::Antic;
 use crate::gtia::Gtia;
 use crate::pokey::Pokey;
 use crate::pia::Pia;
+use crate::framebuffer::Framebuffer;
 
 pub struct Atari800 {
     // Core components
@@ -21,6 +22,9 @@ pub struct Atari800 {
     // Debugger
     debugger: Debugger,
 
+    // Display
+    pub framebuffer: Framebuffer,
+
     // Cycle tracking
     master_cycle: u64,
     cpu_halted: bool,
@@ -30,12 +34,13 @@ impl Atari800 {
     pub fn new() -> Atari800 {
         let mut atari800 = Atari800 {
             cpu: Cpu::new(),
-            mem: Mem::new(0, true),
+            mem: Mem::new(0xC000, false),  // ROM at $C000-$FFFF, load OS ROM
             antic: Antic::new(),
             gtia: Gtia::new(),
             pokey: Pokey::new(),
             pia: Pia::new(),
             debugger: Debugger::new(),
+            framebuffer: Framebuffer::new(320, 192),  // 40 chars × 8 pixels = 320, 24 lines × 8 = 192
             master_cycle: 0,
             cpu_halted: false,
         };
@@ -45,6 +50,9 @@ impl Atari800 {
         // so we'll just set the PC manually for now
         // TODO: Load PC from reset vector at 0xFFFC
         atari800.cpu.pc = 0x0400; // Functional test start address
+
+        // Set up test pattern
+        atari800.setup_test_pattern();
 
         atari800
     }
@@ -96,6 +104,146 @@ impl Atari800 {
         self.pia.tick();
 
         self.master_cycle += 1;
+    }
+
+    /// Set up a test pattern in screen memory AND display list
+    fn setup_test_pattern(&mut self) {
+        // Screen memory at $4000 (40 chars × 24 lines = 960 bytes)
+        let screen_base = 0x4000u16;
+        let dlist_base = 0x0600u16;
+
+        // Set GTIA colors
+        self.gtia.write_register(0xD01A, 0x00);  // Background: black (COLBK)
+        self.gtia.write_register(0xD016, 0x0F);  // Playfield 0: white (COLPF0)
+        self.gtia.write_register(0xD017, 0x0F);  // Playfield 1: white (COLPF1) - for text luminance
+
+        // Write "HELLO ATARI 800" centered on first line
+        // Convert from ASCII to ATASCII screen codes
+        let text = "     HELLO ATARI 800     ";
+        for (i, ch) in text.chars().enumerate() {
+            let screen_code = Self::ascii_to_atascii(ch);
+            self.mem.set_byte(screen_base + i as u16, screen_code);
+        }
+
+        // Fill rest of screen with spaces (ATASCII 0x00)
+        for i in text.len()..960 {
+            self.mem.set_byte(screen_base + i as u16, 0x00);  // Space = 0x00 in ATASCII
+        }
+
+        // Build display list at $0600
+        let mut dlist_offset = 0u16;
+
+        // 24 blank lines (3 × 8 lines each)
+        self.mem.set_byte(dlist_base + dlist_offset, 0x70); dlist_offset += 1;
+        self.mem.set_byte(dlist_base + dlist_offset, 0x70); dlist_offset += 1;
+        self.mem.set_byte(dlist_base + dlist_offset, 0x70); dlist_offset += 1;
+
+        // Mode 2 (40-column text) with LMS (Load Memory Scan) - first line
+        self.mem.set_byte(dlist_base + dlist_offset, 0x42); dlist_offset += 1;  // Mode 2 + LMS
+        self.mem.set_byte(dlist_base + dlist_offset, (screen_base & 0xFF) as u8); dlist_offset += 1;
+        self.mem.set_byte(dlist_base + dlist_offset, (screen_base >> 8) as u8); dlist_offset += 1;
+
+        // 23 more lines of Mode 2 (no LMS needed, ANTIC auto-increments)
+        for _ in 0..23 {
+            self.mem.set_byte(dlist_base + dlist_offset, 0x02); dlist_offset += 1;
+        }
+
+        // JVB (Jump with Vertical Blank) - jump back to start of display list
+        self.mem.set_byte(dlist_base + dlist_offset, 0x41); dlist_offset += 1;
+        self.mem.set_byte(dlist_base + dlist_offset, (dlist_base & 0xFF) as u8); dlist_offset += 1;
+        self.mem.set_byte(dlist_base + dlist_offset, (dlist_base >> 8) as u8);
+
+        // Set ANTIC registers
+        self.antic.write_register(0xD402, (dlist_base & 0xFF) as u8);  // DLISTL
+        self.antic.write_register(0xD403, (dlist_base >> 8) as u8);    // DLISTH
+        self.antic.write_register(0xD409, 0x00);  // CHBASE = 0 (use built-in font)
+        self.antic.write_register(0xD400, 0x22);  // DMACTL = enable DMA, normal width
+    }
+
+    /// Convert ASCII character to ATASCII screen code (internal code)
+    fn ascii_to_atascii(ch: char) -> u8 {
+        match ch {
+            ' ' => 0x00,  // Space
+            '!' => 0x01,
+            '"' => 0x02,
+            '#' => 0x03,
+            '$' => 0x04,
+            '%' => 0x05,
+            '&' => 0x06,
+            '\'' => 0x07,
+            '(' => 0x08,
+            ')' => 0x09,
+            '*' => 0x0A,
+            '+' => 0x0B,
+            ',' => 0x0C,
+            '-' => 0x0D,
+            '.' => 0x0E,
+            '/' => 0x0F,
+            '0'..='9' => (ch as u8) - b'0' + 0x10,  // Digits 0-9 = 0x10-0x19
+            ':' => 0x1A,
+            ';' => 0x1B,
+            '<' => 0x1C,
+            '=' => 0x1D,
+            '>' => 0x1E,
+            '?' => 0x1F,
+            '@' => 0x20,
+            'A'..='Z' => (ch as u8) - b'A' + 0x21,  // Uppercase A-Z = 0x21-0x3A
+            '[' => 0x3B,
+            '\\' => 0x3C,
+            ']' => 0x3D,
+            '^' => 0x3E,
+            '_' => 0x3F,
+            '`' => 0x60,
+            'a'..='z' => (ch as u8) - b'a' + 0x41,  // Lowercase a-z = 0x41-0x5A
+            _ => 0x00,  // Default to space
+        }
+    }
+
+    /// Render one complete frame using ANTIC display list processing
+    /// This simulates one full frame (192 visible scanlines for our simplified display)
+    pub fn render(&mut self) {
+        // Get background and foreground colors from GTIA
+        let bg_color = self.gtia.color_to_rgb(self.gtia.read_register(0xD01A));  // COLBK
+        let fg_color = self.gtia.color_to_rgb(self.gtia.read_register(0xD016));  // COLPF0
+
+        // Clear framebuffer to background color
+        self.framebuffer.clear_color(bg_color.0, bg_color.1, bg_color.2);
+
+        // Process each scanline through ANTIC
+        for scanline in 0..192 {
+            // Let ANTIC process this scanline using the display list
+            self.antic.process_scanline(&self.mem);
+
+            // Convert ANTIC's scanline buffer to RGB and write to framebuffer
+            for x in 0..320 {
+                let color_index = self.antic.scanline_buffer[x];
+                let (r, g, b) = match color_index {
+                    0 => bg_color,  // Background
+                    1 => fg_color,  // Foreground
+                    _ => bg_color,  // Fallback
+                };
+
+                self.framebuffer.set_pixel(x, scanline, r, g, b);
+            }
+        }
+    }
+
+    /// Save framebuffer as PPM image file
+    pub fn save_framebuffer(&self, filename: &str) -> std::io::Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let mut file = File::create(filename)?;
+
+        // PPM header
+        writeln!(file, "P6")?;
+        writeln!(file, "{} {}", self.framebuffer.width, self.framebuffer.height)?;
+        writeln!(file, "255")?;
+
+        // Write RGB pixel data
+        file.write_all(&self.framebuffer.pixels)?;
+
+        Ok(())
     }
 }
 

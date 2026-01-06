@@ -20,16 +20,37 @@ impl Mem {
             let f = File::open("6502_functional_test.bin");
             let mut f = match f {
                 Ok(file) => file,
-                Err(error) => panic!("Could not open test file"),
+                Err(_error) => panic!("Could not open test file"),
             };
 
             let mut buffer = Vec::new();
-            f.read_to_end(&mut buffer);
+            f.read_to_end(&mut buffer).expect("Failed to read test file");
 
             new_mem.ram[0..0x10000].copy_from_slice(&buffer);
+        } else {
+            // Load Atari OS ROM at $C000-$FFFF (16KB)
+            new_mem.load_os_rom();
         }
 
         new_mem
+    }
+
+    /// Load Atari OS ROM into memory at $C000-$FFFF
+    fn load_os_rom(&mut self) {
+        println!("ROM loading...");
+        if let Ok(mut f) = File::open("roms/Atari OS-B NTSC.ROM") {
+            let mut buffer = Vec::new();
+            if f.read_to_end(&mut buffer).is_ok() && buffer.len() == 0x2800 {
+                // Atari 800 OS B ROM is 10240 bytes, load at $D800-$FFFF
+                self.rom[0xD800..0x10000].copy_from_slice(&buffer[0..0x2800]);
+                println!("ROM loaded");
+            } else {
+                println!("Buffer issue loading ROM, buffer len was {}", buffer.len());
+            }
+        } else {
+            println!("Failed to load ROM");
+        }
+        // If ROM file not found, continue with empty ROM (font rendering will fail gracefully)
     }
 
     pub fn get_byte(&self, addr: u16) -> u8 {
