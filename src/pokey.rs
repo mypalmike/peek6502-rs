@@ -45,12 +45,12 @@ impl Pokey {
             irqen: 0,
             skctl: 0,
             pot: [0xFF; 8],
-            allpot: 0,
-            kbcode: 0xFF,
+            allpot: 0xFF,  // All pot lines high
+            kbcode: 0xFF,  // No key pressed
             random: 0,
             serin: 0,
-            irqst: 0,
-            skstat: 0,
+            irqst: 0xFF,   // No IRQs pending (bits high = no IRQ)
+            skstat: 0xFF,  // All status bits high = keyboard ready, no errors
             timers: [0; 4],
             random_seed: 0xFF,
         }

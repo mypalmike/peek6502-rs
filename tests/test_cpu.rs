@@ -23,6 +23,14 @@ impl Bus for TestBus {
     fn write(&mut self, addr: u16, val: u8) {
         self.mem.set_byte(addr, val);
     }
+
+    fn nmi_pending(&mut self) -> bool {
+        false  // No NMI for tests
+    }
+
+    fn clear_nmi(&mut self) {
+        // No-op for tests
+    }
 }
 
 fn get_cpu_bus() -> (Cpu, TestBus) {
@@ -212,4 +220,147 @@ fn test_sbc_dec() {
     assert_eq!(cpu.a, 0x00);
     assert_eq!(cpu.z, true);
     assert_eq!(cpu.c, false);
+}
+
+// Helper function to count cycles for instruction execution
+fn count_cycles(cpu: &mut Cpu, bus: &mut TestBus) -> u32 {
+    let mut cycles = 0;
+    while cpu.cycles_remaining > 0 || cycles == 0 {
+        cpu.tick(bus);
+        cycles += 1;
+    }
+    cycles
+}
+
+// ===== PAGE BOUNDARY TIMING TESTS =====
+
+#[test]
+fn test_lda_abx_no_page_cross() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    // Base 0x0200 + X=0x10 = 0x0210 (same page)
+    bus.mem.ram[0x0210] = 0x42;
+    cpu.x = 0x10;
+
+    let code: [u8; 3] = [0xBD, 0x00, 0x02];  // LDA $0200,X
+    bus.mem.ram[0x0800..0x0803].copy_from_slice(&code);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cycles, 4);  // Base timing, no penalty
+}
+
+#[test]
+fn test_lda_abx_with_page_cross() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    // Base 0x02FF + X=0x01 = 0x0300 (crosses page)
+    bus.mem.ram[0x0300] = 0x42;
+    cpu.x = 0x01;
+
+    let code: [u8; 3] = [0xBD, 0xFF, 0x02];  // LDA $02FF,X
+    bus.mem.ram[0x0800..0x0803].copy_from_slice(&code);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cycles, 5);  // Base 4 + 1 penalty
+}
+
+#[test]
+fn test_bne_not_taken() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    cpu.z = true;  // BNE won't branch (Z=1)
+    let code: [u8; 2] = [0xD0, 0x10];  // BNE +16
+    bus.mem.ram[0x0800..0x0802].copy_from_slice(&code);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.pc, 0x0802);  // Falls through
+    assert_eq!(cycles, 2);  // Base timing only
+}
+
+#[test]
+fn test_bne_taken_no_page_cross() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    cpu.z = false;  // BNE will branch (Z=0)
+    let code: [u8; 2] = [0xD0, 0x10];  // BNE +16
+    bus.mem.ram[0x0800..0x0802].copy_from_slice(&code);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.pc, 0x0812);  // 0x0802 + 0x10
+    assert_eq!(cycles, 3);  // Base 2 + 1 for taken
+}
+
+#[test]
+fn test_bne_taken_with_page_cross() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    cpu.z = false;  // BNE will branch (Z=0)
+    let code: [u8; 2] = [0xD0, 0x7F];  // BNE +127
+    bus.mem.ram[0x08F0..0x08F2].copy_from_slice(&code);
+    cpu.pc = 0x08F0;  // Near page boundary
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.pc, 0x0971);  // 0x08F2 + 0x7F crosses page
+    assert_eq!(cycles, 4);  // Base 2 + 1 taken + 1 page cross
+}
+
+#[test]
+fn test_bne_backward_with_page_cross() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    cpu.z = false;  // BNE will branch (Z=0)
+    let code: [u8; 2] = [0xD0, 0x80];  // BNE -128 (0x80 as i8 = -128)
+    bus.mem.ram[0x0902..0x0904].copy_from_slice(&code);
+    cpu.pc = 0x0902;  // Jumping back crosses page
+    cpu.cycles_remaining = 0;
+
+    let cycles = count_cycles(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.pc, 0x0884);  // 0x0904 + (-128) crosses page
+    assert_eq!(cycles, 4);  // Base 2 + 1 taken + 1 page cross
+}
+
+#[test]
+fn test_sta_abx_always_same_cycles() {
+    let (mut cpu, mut bus) = get_cpu_bus();
+
+    cpu.a = 0x42;
+
+    // Case 1: No page cross
+    cpu.x = 0x01;
+    let code: [u8; 3] = [0x9D, 0x00, 0x02];  // STA $0200,X
+    bus.mem.ram[0x0800..0x0803].copy_from_slice(&code);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles1 = count_cycles(&mut cpu, &mut bus);
+    assert_eq!(cycles1, 5);  // Always 5
+    assert_eq!(bus.mem.ram[0x0201], 0x42);
+
+    // Case 2: With page cross
+    cpu.x = 0x01;
+    let code2: [u8; 3] = [0x9D, 0xFF, 0x02];  // STA $02FF,X
+    bus.mem.ram[0x0800..0x0803].copy_from_slice(&code2);
+    cpu.pc = 0x0800;
+    cpu.cycles_remaining = 0;
+
+    let cycles2 = count_cycles(&mut cpu, &mut bus);
+    assert_eq!(cycles2, 5);  // Still always 5
+    assert_eq!(bus.mem.ram[0x0300], 0x42);
 }

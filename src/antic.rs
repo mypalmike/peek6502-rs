@@ -40,6 +40,9 @@ pub struct Antic {
     nmien: u8,      // $D40E - NMI enable
     nmires: u8,     // $D40F - NMI reset/status
 
+    // NMI line state
+    nmi_asserted: bool,  // true = ANTIC is asserting NMI line
+
     // Scanline buffer (pixels to be displayed)
     pub scanline_buffer: [u8; 384],  // Color indices for current scanline
 }
@@ -70,6 +73,7 @@ impl Antic {
             penv: 0,
             nmien: 0,
             nmires: 0,
+            nmi_asserted: false,
             scanline_buffer: [0; 384],
         }
     }
@@ -102,7 +106,13 @@ impl Antic {
             0x0B => self.vcount,    // VCOUNT is readable
             0x0C => self.penh,      // Light pen H
             0x0D => self.penv,      // Light pen V
-            0x0F => self.nmires,    // NMI status
+            0x0F => {
+                // NMIST - NMI status
+                // Bit 6 = VBI occurred
+                // Bit 7 = DLI occurred
+                // Bit 5 = reset key pressed
+                self.nmires
+            }
             _ => 0xFF,              // Other registers are write-only
         }
     }
@@ -113,30 +123,104 @@ impl Antic {
             0x00 => {
                 self.dmactl = val;
                 self.dma_enabled = (val & 0x20) != 0; // Bit 5 enables DMA
+                eprintln!("DMACTL=${:02X} (DMA={}, playfield={:02b})", val, self.dma_enabled, val & 0x03);
             }
             0x01 => self.chactl = val,
             0x02 => {
                 self.dlistl = val;
                 self.update_dlist_ptr();
+                eprintln!("DLISTL=${:02X}, ptr now=${:04X}", val, self.dlist_ptr);
             }
             0x03 => {
                 self.dlisth = val;
                 self.update_dlist_ptr();
+                eprintln!("DLISTH=${:02X}, ptr now=${:04X}", val, self.dlist_ptr);
             }
             0x04 => self.hscrol = val,
             0x05 => self.vscrol = val,
             0x07 => self.pmbase = val,
             0x09 => self.chbase = val,
             0x0A => self.wsync = val,   // CPU write to WSYNC halts until HSYNC
-            0x0E => self.nmien = val,
-            0x0F => self.nmires = val,
+            0x0E => {
+                self.nmien = val;
+                eprintln!("NMIEN=${:02X} (VBI={}, DLI={})", val, (val & 0x40) != 0, (val & 0x80) != 0);
+            }
+            0x0F => {
+                // Writing to NMIRES clears NMI status bits
+                self.nmires = 0;
+            }
             _ => {}
         }
+    }
+
+    /// Set VBI (Vertical Blank Interrupt) flag in NMIST
+    /// Called by Atari800 when triggering VBI
+    pub fn set_vbi_flag(&mut self) {
+        self.nmires |= 0x40;  // Set bit 6 = VBI occurred
+    }
+
+    /// Clear VBI flag (called when NMI is acknowledged)
+    pub fn clear_vbi_flag(&mut self) {
+        self.nmires &= !0x40;  // Clear bit 6
+    }
+
+    /// Check if VBI NMI is enabled
+    /// Returns true if NMIEN bit 6 (0x40) is set
+    pub fn is_vbi_enabled(&self) -> bool {
+        (self.nmien & 0x40) != 0
     }
 
     fn update_dlist_ptr(&mut self) {
         self.dlist_ptr = (self.dlistl as u16) | ((self.dlisth as u16) << 8);
         self.dlist_index = self.dlist_ptr;  // Reset to start of display list
+    }
+
+    /// Simulate one frame of ANTIC video timing (for instruction-level emulation)
+    /// This advances through all scanlines to keep VCOUNT realistic for OS timing loops
+    /// Should be called before each frame render
+    pub fn simulate_frame_timing(&mut self) {
+        // Simulate that a full frame has passed - cycle through all 262 scanlines
+        // This allows OS busy-wait loops on VCOUNT to complete
+        // We start at scanline 0 each frame for simplicity
+        self.scanline = 0;
+        self.vcount = 0;
+    }
+
+    /// Advance to a specific scanline (for simulating mid-frame timing)
+    pub fn advance_to_scanline(&mut self, target: u16) {
+        if target < 262 {
+            self.scanline = target;
+            self.vcount = (target & 0xff) as u8;
+        }
+    }
+
+    /// Advance to next scanline (wraps at 262)
+    pub fn advance_scanline(&mut self) {
+        self.scanline = (self.scanline + 1) % 262;
+        self.vcount = (self.scanline / 2) as u8;  // VCOUNT = scanline / 2
+
+        // Assert NMI at start of VBLANK (scanline 248) if VBI is enabled
+        // VBLANK spans scanlines 248-261, then 0-9 (22 lines total)
+        if self.scanline == 248 && self.is_vbi_enabled() {
+            self.nmi_asserted = true;
+            self.nmires |= 0x40;  // Set VBI flag in NMIST
+            eprintln!("VBI: NMI asserted at scanline 248");
+        }
+    }
+
+    /// Check if ANTIC is asserting the NMI line
+    pub fn is_nmi_asserted(&self) -> bool {
+        self.nmi_asserted
+    }
+
+    /// Clear the NMI assertion (called after CPU acknowledges NMI)
+    pub fn clear_nmi(&mut self) {
+        self.nmi_asserted = false;
+    }
+
+    /// Get current scanline (for debugging and timing)
+    pub fn get_scanline(&self) -> u16 {
+        self.scanline
     }
 
     /// Process one scanline using the display list

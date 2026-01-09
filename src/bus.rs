@@ -26,4 +26,12 @@ pub trait Bus {
         self.write(addr, lo);
         self.write(addr.wrapping_add(1), hi);
     }
+
+    /// Check if NMI (Non-Maskable Interrupt) is pending
+    /// The 6502 checks this at the end of each instruction
+    fn nmi_pending(&mut self) -> bool;
+
+    /// Clear the NMI line
+    /// Called after CPU has acknowledged the NMI
+    fn clear_nmi(&mut self);
 }

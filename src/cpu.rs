@@ -35,6 +35,9 @@ pub struct Cpu {
     cycle_table: [u8; 256],        // Base cycle counts for each opcode
     pub cycles_remaining: u8,       // Cycles left in current instruction
     current_opcode: u8,             // Currently executing opcode
+
+    // Debugging/tracing
+    pub trace_remaining: u32,       // Number of instructions to trace (0 = no trace)
 }
 
 impl Cpu {
@@ -56,6 +59,7 @@ impl Cpu {
             cycle_table: [0; 256],  // Will be initialized below
             cycles_remaining: 0,
             current_opcode: 0,
+            trace_remaining: 0,
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -378,6 +382,8 @@ impl Cpu {
         // 5-6. Read NMI vector from $FFFA/$FFFB
         // 7. Jump to handler
 
+        let old_pc = self.pc;
+
         // Push PC (high byte first)
         self.stack_push_byte(bus, (self.pc >> 8) as u8);
         self.stack_push_byte(bus, (self.pc & 0xFF) as u8);
@@ -392,12 +398,57 @@ impl Cpu {
         // Load PC from NMI vector
         self.pc = bus.read_word(VECTOR_NMI);
 
-        // NMI takes 7 cycles
-        self.cycles_remaining = 7;
+        // NMI sequence is complete - next tick() should execute the instruction at the handler
+        // The 7-cycle cost is implicit in the operations we just performed
+        self.cycles_remaining = 0;
+    }
+
+    /// Print trace output for debugging (shows PC, registers, and key zero-page vectors)
+    fn print_trace(&self, bus: &mut dyn Bus) {
+        // Read key zero-page locations (OS vectors)
+        let vec_0200 = bus.read_word(0x0200);  // Immediate VBI vector
+        let vec_0216 = bus.read_word(0x0216);  // Main loop vector
+        let vec_0222 = bus.read_word(0x0222);  // Deferred VBI vector
+
+        // Read next opcode to help with control flow analysis
+        let opcode = bus.read(self.pc);
+        let operand1 = bus.read(self.pc.wrapping_add(1));
+        let operand2 = bus.read(self.pc.wrapping_add(2));
+
+        // Identify key control flow instructions
+        let opcode_desc = match opcode {
+            0x20 => format!("JSR ${:02X}{:02X}", operand2, operand1),
+            0x4C => format!("JMP ${:02X}{:02X}", operand2, operand1),
+            0x6C => format!("JMP (${:02X}{:02X})", operand2, operand1),
+            0x60 => "RTS".to_string(),
+            0x40 => "RTI".to_string(),
+            0x00 => "BRK".to_string(),
+            _ => format!("{:02X}", opcode),
+        };
+
+        eprintln!(
+            "PC={:04X} A={:02X} X={:02X} Y={:02X} S={:02X} [{:12}] | $0216={:04X} $0222={:04X} $0200={:04X}",
+            self.pc, self.a, self.x, self.y, self.s, opcode_desc,
+            vec_0216, vec_0222, vec_0200
+        );
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {
         if self.cycles_remaining == 0 {
+            // Check for NMI at end of instruction (before starting next instruction)
+            // The 6502 checks NMI at the end of each instruction
+            if bus.nmi_pending() {
+                bus.clear_nmi();
+                self.nmi(bus);
+                return 7;  // NMI takes 7 cycles
+            }
+
+            // Trace output before executing instruction
+            if self.trace_remaining > 0 {
+                self.print_trace(bus);
+                self.trace_remaining -= 1;
+            }
+
             // Start new instruction
             self.current_opcode = self.fetch_byte(bus);
 
@@ -464,21 +515,27 @@ impl Cpu {
         bus.read(addr)
     }
 
-    fn fetch_addr_mode_abx(&mut self, bus: &mut dyn Bus) -> u16 {
-        self.fetch_word(bus) + self.x as u16
+    fn fetch_addr_mode_abx(&mut self, bus: &mut dyn Bus) -> (u16, bool) {
+        let base = self.fetch_word(bus);
+        let page_crossed = self.crosses_page_boundary(base, self.x);
+        let addr = base.wrapping_add(self.x as u16);
+        (addr, page_crossed)
     }
 
     fn fetch_val_mode_abx(&mut self, bus: &mut dyn Bus) -> u8 {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
         bus.read(addr)
     }
 
-    fn fetch_addr_mode_aby(&mut self, bus: &mut dyn Bus) -> u16 {
-        self.fetch_word(bus) + self.y as u16
+    fn fetch_addr_mode_aby(&mut self, bus: &mut dyn Bus) -> (u16, bool) {
+        let base = self.fetch_word(bus);
+        let page_crossed = self.crosses_page_boundary(base, self.y);
+        let addr = base.wrapping_add(self.y as u16);
+        (addr, page_crossed)
     }
 
     fn fetch_val_mode_aby(&mut self, bus: &mut dyn Bus) -> u8 {
-        let addr = self.fetch_addr_mode_aby(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
         bus.read(addr)
     }
 
@@ -521,13 +578,16 @@ impl Cpu {
         bus.read(addr)
     }
 
-    fn fetch_addr_mode_izy(&mut self, bus: &mut dyn Bus) -> u16 {
-        let addr = self.fetch_byte(bus) as u16;
-        bus.read_word(addr).wrapping_add(self.y as u16)
+    fn fetch_addr_mode_izy(&mut self, bus: &mut dyn Bus) -> (u16, bool) {
+        let zp_addr = self.fetch_byte(bus) as u16;
+        let base = bus.read_word(zp_addr);
+        let page_crossed = self.crosses_page_boundary(base, self.y);
+        let addr = base.wrapping_add(self.y as u16);
+        (addr, page_crossed)
     }
 
     fn fetch_val_mode_izy(&mut self, bus: &mut dyn Bus) -> u8 {
-        let addr = self.fetch_addr_mode_izy(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
         bus.read(addr)
     }
 
@@ -644,13 +704,28 @@ impl Cpu {
 
     // 0x10, time 2+
     fn op_bpl_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bpl(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if !self.n {  // BPL: branch on plus (N=0)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0x11, time 5+
     fn op_ora_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.ora(bus, val);
     }
 
@@ -688,9 +763,13 @@ impl Cpu {
         self.c = false;
     }
 
-    // 0x19, time 4
+    // 0x19, time 4+
     fn op_ora_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.ora(bus, val);
     }
 
@@ -705,18 +784,27 @@ impl Cpu {
 
     // 0x1c, time 4+, unofficial
     fn op_nop_abx(&mut self, bus: &mut dyn Bus) {
-        self.pc += 2;
+        let (_addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        // NOP doesn't use the address value
     }
 
-    // 0x1d, time 4
+    // 0x1d, time 4+
     fn op_ora_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.ora(bus, val);
     }
 
     // 0x1e, time 7
     fn op_asl_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.asl_mem(bus, addr);
     }
 
@@ -814,13 +902,28 @@ impl Cpu {
 
     // 0x30, time 2+
     fn op_bmi_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bmi(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if self.n {  // BMI: branch on minus (N=1)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0x31, time 5+
     fn op_and_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.and(bus, val);
     }
 
@@ -855,9 +958,13 @@ impl Cpu {
         self.c = true;
     }
 
-    // 0x39, time 4
+    // 0x39, time 4+
     fn op_and_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.and(bus, val);
     }
 
@@ -872,13 +979,18 @@ impl Cpu {
 
     // 0x3d, time 4+
     fn op_and_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.and(bus, val);
     }
 
     // 0x3e, time 7
     fn op_rol_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.rol_mem(bus, addr);
     }
 
@@ -975,13 +1087,28 @@ impl Cpu {
 
     // 0x50, time 2+
     fn op_bvc_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bvc(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if !self.v {  // BVC: branch on overflow clear (V=0)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
-    // 0x51, time 5
+    // 0x51, time 5+
     fn op_eor_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.eor(bus, val);
     }
 
@@ -1018,7 +1145,11 @@ impl Cpu {
 
     // 0x59, time 4+
     fn op_eor_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.eor(bus, val);
     }
 
@@ -1031,15 +1162,20 @@ impl Cpu {
 
     // 0x5c nop_abx
 
-    // 0x5d, time 4
+    // 0x5d, time 4+
     fn op_eor_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.eor(bus, val);
     }
 
     // 0x5e, time 7
     fn op_lsr_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.lsr_mem(bus, addr);
     }
 
@@ -1135,15 +1271,30 @@ impl Cpu {
         panic!("op_rra_abs is not implemented");
     }
 
-    // 0x70, time 2
+    // 0x70, time 2+
     fn op_bvs_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bvs(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if self.v {  // BVS: branch on overflow set (V=1)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0x71, time 5+
     fn op_adc_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.adc(bus, val);
     }
 
@@ -1180,7 +1331,11 @@ impl Cpu {
 
     // 0x79, time 4+
     fn op_adc_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.adc(bus, val);
     }
 
@@ -1193,15 +1348,20 @@ impl Cpu {
 
     // 0x7c nop_abx
 
-    // 0x7d, time 4
+    // 0x7d, time 4+
     fn op_adc_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.adc(bus, val);
     }
 
     // 0x7e, time 7
     fn op_ror_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.ror_mem(bus, addr);
     }
 
@@ -1295,13 +1455,25 @@ impl Cpu {
 
     // 0x90, time 2+
     fn op_bcc_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bcc(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if !self.c {  // BCC: branch on carry clear (C=0)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0x91, time 6
     fn op_sta_izy(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_izy(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        // Write instructions always take penalty (in base timing)
         self.sta(bus, addr);
     }
 
@@ -1343,7 +1515,8 @@ impl Cpu {
 
     // 0x99, time 5
     fn op_sta_aby(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_aby(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        // Write instructions always take penalty (in base timing)
         self.sta(bus, addr);
     }
 
@@ -1364,7 +1537,8 @@ impl Cpu {
 
     // 0x9d, time 5
     fn op_sta_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // Write instructions always take penalty (in base timing)
         self.sta(bus, addr);
     }
 
@@ -1470,15 +1644,30 @@ impl Cpu {
         panic!("op_lax_imm is not implemented");
     }
 
-    // 0xb0, time 2
+    // 0xb0, time 2+
     fn op_bcs_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bcs(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if self.c {  // BCS: branch on carry set (C=1)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
-    // 0xb1, time 5
+    // 0xb1, time 5+
     fn op_lda_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.lda(bus, val);
     }
 
@@ -1519,7 +1708,11 @@ impl Cpu {
 
     // 0xb9, time 4+
     fn op_lda_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.lda(bus, val);
     }
 
@@ -1536,19 +1729,31 @@ impl Cpu {
 
     // 0xbc, time 4+
     fn op_ldy_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.ldy(bus, val);
     }
 
     // 0xbd, time 4+
     fn op_lda_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.lda(bus, val);
     }
 
     // 0xbe, time 4+
     fn op_ldx_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.ldx(bus, val);
     }
 
@@ -1647,13 +1852,28 @@ impl Cpu {
 
     // 0xd0, time 2+
     fn op_bne_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.bne(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if !self.z {  // BNE: branch on not equal (Z=0)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0xd1, time 5+
     fn op_cmp_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.cmp(bus, self.a, val);
     }
 
@@ -1690,7 +1910,11 @@ impl Cpu {
 
     // 0xd9, time 4+
     fn op_cmp_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.cmp(bus, self.a, val);
     }
 
@@ -1703,15 +1927,20 @@ impl Cpu {
 
     // 0xdc nop_abx
 
-    // 0xdd, time 4
+    // 0xdd, time 4+
     fn op_cmp_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.cmp(bus, self.a, val);
     }
 
     // 0xde, time 7
     fn op_dec_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.dec(bus, addr);
     }
 
@@ -1803,13 +2032,28 @@ impl Cpu {
 
     // 0xf0, time 2+
     fn op_beq_rel(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_rel(bus);
-        self.beq(bus, addr);
+        let offset = self.fetch_byte(bus) as i8;
+
+        if self.z {  // BEQ: branch on equal (Z=1)
+            self.cycles_remaining += 1;  // Branch taken: +1 cycle
+
+            if self.branch_crosses_page(offset) {
+                self.cycles_remaining += 1;  // Page boundary: +1 cycle
+            }
+
+            let target = self.pc.wrapping_add(offset as i16 as u16);
+            self.check_addr(target);
+            self.pc = target;
+        }
     }
 
     // 0xf1, time 5+
     fn op_sbc_izy(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_izy(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.sbc(bus, val);
     }
 
@@ -1846,7 +2090,11 @@ impl Cpu {
 
     // 0xf9, time 4+
     fn op_sbc_aby(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_aby(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.sbc(bus, val);
     }
 
@@ -1861,13 +2109,18 @@ impl Cpu {
 
     // 0xfd, time 4+
     fn op_sbc_abx(&mut self, bus: &mut dyn Bus) {
-        let val = self.fetch_val_mode_abx(bus);
+        let (addr, page_crossed) = self.fetch_addr_mode_abx(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
         self.sbc(bus, val);
     }
 
     // 0xfe, time 7
     fn op_inc_abx(&mut self, bus: &mut dyn Bus) {
-        let addr = self.fetch_addr_mode_abx(bus);
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        // RMW instructions always take penalty (in base timing)
         self.inc(bus, addr);
     }
 

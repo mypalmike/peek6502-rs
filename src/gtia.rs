@@ -58,7 +58,7 @@ impl Gtia {
             vdelay: 0,
             gractl: 0,
             hitclr: 0,
-            consol: 0,
+            consol: 0x07,  // Bits 0-2: START, SELECT, OPTION (1 = not pressed)
             m0pf: 0,
             m1pf: 0,
             m2pf: 0,

@@ -24,13 +24,16 @@ pub struct Atari800 {
     // Cycle tracking
     master_cycle: u64,
     cpu_halted: bool,
+
+    // NMI line (6502 hardware interrupt line)
+    nmi_line: bool,
 }
 
 impl Atari800 {
     pub fn new() -> Atari800 {
         let mut atari800 = Atari800 {
             cpu: Cpu::new(),
-            mem: Mem::new(0xC000, false),  // ROM at $C000-$FFFF, load OS ROM
+            mem: Mem::new(0xD800, false),  // ROM at $D800-$FFFF (10KB OS ROM), load OS ROM
             antic: Antic::new(),
             gtia: Gtia::new(),
             pokey: Pokey::new(),
@@ -38,6 +41,7 @@ impl Atari800 {
             debugger: Debugger::new(),
             master_cycle: 0,
             cpu_halted: false,
+            nmi_line: false,
         };
 
         // Reset CPU after construction to load PC from reset vector
@@ -46,16 +50,11 @@ impl Atari800 {
         cpu.reset(&mut atari800);  // atari800 implements Bus
         atari800.cpu = cpu;
 
-        // Set up test pattern
-        atari800.setup_test_pattern();
-
         atari800
     }
 
     pub fn tick(&mut self) {
-        // For now, keep debugger-driven execution
-        // TODO: Integrate with cycle-accurate execution below
-
+        // For debugger mode - uses interactive debugger
         // We need to temporarily take ownership of cpu and debugger to call tick
         // because we can't borrow self mutably while also passing self as Bus
         let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
@@ -65,9 +64,36 @@ impl Atari800 {
 
         self.cpu = cpu;
         self.debugger = debugger;
+    }
 
-        // Cycle-accurate execution (commented out for now to avoid breaking debugger)
-        // self.tick_cycle_accurate();
+    /// Execute one CPU instruction without debugger (for normal emulation)
+    /// Execute one CPU instruction and return the number of cycles used
+    pub fn tick_cpu(&mut self) -> u32 {
+        // Check if ANTIC is asserting NMI
+        if self.antic.is_nmi_asserted() {
+            self.nmi_line = true;
+        }
+
+        // Take ownership of CPU temporarily
+        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+
+        // Execute one instruction (returns 1 cycle per tick)
+        let mut cycles = 0;
+
+        // Execute until instruction completes (may take multiple cycles)
+        cpu.tick(self);
+        cycles += 1;
+
+        // Continue until instruction finishes
+        while cpu.cycles_remaining > 0 {
+            cpu.tick(self);
+            cycles += 1;
+        }
+
+        // Restore CPU
+        self.cpu = cpu;
+
+        cycles
     }
 
     /// Cycle-accurate tick - executes one machine cycle
@@ -102,7 +128,7 @@ impl Atari800 {
     }
 
     /// Set up a test pattern in screen memory AND display list
-    fn setup_test_pattern(&mut self) {
+    pub fn setup_test_pattern(&mut self) {
         // Screen memory at $4000 (40 chars × 24 lines = 960 bytes)
         let screen_base = 0x4000u16;
         let dlist_base = 0x0600u16;
@@ -197,6 +223,32 @@ impl Atari800 {
     /// Render one complete frame using ANTIC display list processing
     /// This simulates one full frame (192 visible scanlines for our simplified display)
     pub fn render(&mut self) {
+        // Debug: Print screen memory once at frame 300
+        static mut FRAME_COUNT: u32 = 0;
+        unsafe {
+            FRAME_COUNT += 1;
+            if FRAME_COUNT == 300 {
+                // Check first 3 lines of screen memory
+                eprintln!("\n=== SCREEN MEMORY DUMP ===");
+                for line in 0..3 {
+                    eprint!("Line {}: ", line);
+                    for i in 0..40 {
+                        let ch = self.mem.get_byte(0xCC40 + line * 40 + i);
+                        if ch == 0x00 {
+                            eprint!("_");
+                        } else {
+                            eprint!("{:02X}", ch);
+                        }
+                    }
+                    eprintln!();
+                }
+
+                // Also check DOSVEC
+                let dosvec = self.mem.get_byte(0x000A) as u16 | ((self.mem.get_byte(0x000B) as u16) << 8);
+                eprintln!("DOSVEC = ${:04X}", dosvec);
+            }
+        }
+
         // Clear framebuffer to background color
         self.gtia.clear_framebuffer();
 
@@ -220,18 +272,50 @@ impl Atari800 {
     /// Should be called after each frame render
     /// This is essential for Atari OS and most software to function
     pub fn trigger_vbi(&mut self) {
-        // Use mem::replace to temporarily take ownership of CPU
-        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
-        cpu.nmi(self);  // self implements Bus
-        self.cpu = cpu;
+        // Set VBI flag in ANTIC so OS can read NMIST
+        self.antic.set_vbi_flag();
+
+        // Only trigger NMI if VBI is enabled in NMIEN register (bit 6)
+        // This matches real hardware behavior - OS enables VBI after initialization
+        if self.antic.is_vbi_enabled() {
+            // Trigger NMI on CPU
+            let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+            cpu.nmi(self);  // self implements Bus
+            self.cpu = cpu;
+        }
+    }
+
+    /// Enable CPU execution tracing for debugging
+    /// Traces the specified number of instructions to stderr
+    pub fn enable_cpu_trace(&mut self, count: u32) {
+        self.cpu.trace_remaining = count;
+    }
+
+    /// Advance ANTIC scanline counter (for simulating video timing in instruction-level mode)
+    /// Called periodically during CPU execution to keep VCOUNT realistic
+    pub fn advance_scanline(&mut self) {
+        self.antic.advance_scanline();
+    }
+
+    /// Get current scanline from ANTIC (for timing and debugging)
+    pub fn get_scanline(&self) -> u16 {
+        self.antic.get_scanline()
+    }
+
+    /// Read memory byte (for debugging)
+    pub fn read_mem(&self, addr: u16) -> u8 {
+        self.mem.get_byte(addr)
     }
 }
 
 impl Bus for Atari800 {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
-            // GTIA registers ($D000-$D01F)
-            0xD000..=0xD01F => self.gtia.read_register(addr),
+            // GTIA registers ($D000-$D0FF) - mirrors due to incomplete address decoding
+            0xD000..=0xD0FF => self.gtia.read_register(addr),
+
+            // Unused I/O space ($D100-$D1FF)
+            0xD100..=0xD1FF => 0xFF,
 
             // POKEY registers ($D200-$D2FF)
             0xD200..=0xD2FF => self.pokey.read_register(addr),
@@ -242,6 +326,9 @@ impl Bus for Atari800 {
             // ANTIC registers ($D400-$D4FF)
             0xD400..=0xD4FF => self.antic.read_register(addr),
 
+            // Unused I/O space ($D500-$D7FF)
+            0xD500..=0xD7FF => 0xFF,
+
             // Regular memory (RAM/ROM)
             _ => self.mem.get_byte(addr),
         }
@@ -249,8 +336,11 @@ impl Bus for Atari800 {
 
     fn write(&mut self, addr: u16, val: u8) {
         match addr {
-            // GTIA registers ($D000-$D01F)
-            0xD000..=0xD01F => self.gtia.write_register(addr, val),
+            // GTIA registers ($D000-$D0FF) - mirrors due to incomplete address decoding
+            0xD000..=0xD0FF => self.gtia.write_register(addr, val),
+
+            // Unused I/O space ($D100-$D1FF) - ignore writes
+            0xD100..=0xD1FF => {}
 
             // POKEY registers ($D200-$D2FF)
             0xD200..=0xD2FF => self.pokey.write_register(addr, val),
@@ -261,8 +351,20 @@ impl Bus for Atari800 {
             // ANTIC registers ($D400-$D4FF)
             0xD400..=0xD4FF => self.antic.write_register(addr, val),
 
+            // Unused I/O space ($D500-$D7FF) - ignore writes
+            0xD500..=0xD7FF => {}
+
             // Regular memory (RAM/ROM)
             _ => self.mem.set_byte(addr, val),
         }
+    }
+
+    fn nmi_pending(&mut self) -> bool {
+        self.nmi_line
+    }
+
+    fn clear_nmi(&mut self) {
+        self.nmi_line = false;
+        self.antic.clear_nmi();
     }
 }

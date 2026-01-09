@@ -37,18 +37,12 @@ impl Mem {
 
     /// Load Atari OS ROM into memory at $C000-$FFFF
     fn load_os_rom(&mut self) {
-        println!("ROM loading...");
         if let Ok(mut f) = File::open("roms/Atari OS-B NTSC.ROM") {
             let mut buffer = Vec::new();
             if f.read_to_end(&mut buffer).is_ok() && buffer.len() == 0x2800 {
                 // Atari 800 OS B ROM is 10240 bytes, load at $D800-$FFFF
                 self.rom[0xD800..0x10000].copy_from_slice(&buffer[0..0x2800]);
-                println!("ROM loaded");
-            } else {
-                println!("Buffer issue loading ROM, buffer len was {}", buffer.len());
             }
-        } else {
-            println!("Failed to load ROM");
         }
         // If ROM file not found, continue with empty ROM (font rendering will fail gracefully)
     }
@@ -69,7 +63,18 @@ impl Mem {
 
     pub fn set_byte(&mut self, addr: u16, val: u8) {
         if addr >= self.split && self.split != 0 {
-            panic!("Can't write to ROM");
+            // ROM area - ignore writes (real hardware would ignore these)
+            // This can happen with cartridge ROM or when banking is not yet implemented
+            return;
+        }
+
+        // Debug: Watch DOSVEC writes
+        if addr == 0x000A || addr == 0x000B {
+            eprintln!("DOSVEC[${:04X}] = ${:02X}", addr, val);
+            if addr == 0x000B {
+                let dosvec = self.ram[0x000A] as u16 | ((val as u16) << 8);
+                eprintln!("  -> DOSVEC now = ${:04X}", dosvec);
+            }
         }
 
         self.ram[addr as usize] = val;
