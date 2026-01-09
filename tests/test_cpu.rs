@@ -31,6 +31,10 @@ impl Bus for TestBus {
     fn clear_nmi(&mut self) {
         // No-op for tests
     }
+
+    fn irq_asserted(&self) -> bool {
+        false  // No IRQ for tests
+    }
 }
 
 fn get_cpu_bus() -> (Cpu, TestBus) {

@@ -176,4 +176,8 @@ impl Bus for FunctionalTest {
     fn clear_nmi(&mut self) {
         // No NMI support in functional tests
     }
+
+    fn irq_asserted(&self) -> bool {
+        false  // No IRQ support in functional tests
+    }
 }

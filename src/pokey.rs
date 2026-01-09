@@ -30,6 +30,11 @@ pub struct Pokey {
     // Internal state
     timers: [u16; 4],   // Internal timer counters
     random_seed: u8,    // For random number generation
+
+    // Keyboard state
+    last_key_code: u8,  // Last key code pressed (for change detection)
+    shift_pressed: bool, // Track shift key state
+    ctrl_pressed: bool,  // Track control key state
 }
 
 impl Pokey {
@@ -53,6 +58,9 @@ impl Pokey {
             skstat: 0xFF,  // All status bits high = keyboard ready, no errors
             timers: [0; 4],
             random_seed: 0xFF,
+            last_key_code: 0xFF, // No key pressed initially
+            shift_pressed: false,
+            ctrl_pressed: false,
         }
     }
 
@@ -123,5 +131,99 @@ impl Pokey {
             0x0F => self.skctl = val,
             _ => {}
         }
+    }
+
+    /// Handle a key press event
+    /// Returns true if IRQ line should be asserted
+    pub fn key_press(&mut self, atari_key_code: u8, shift: bool, ctrl: bool) -> bool {
+        // Only trigger interrupt on actual key code change
+        // (ignore if only shift/ctrl modifiers changed)
+        let key_code_changed = (atari_key_code & 0x3F) != (self.last_key_code & 0x3F);
+
+        if key_code_changed {
+            self.last_key_code = atari_key_code;
+            self.kbcode = atari_key_code;
+
+            // Clear SKSTAT bit 2 (key ready, 0 = key available)
+            self.skstat &= !0x04;
+
+            // Update keyboard IRQ if enabled
+            if (self.irqen & 0x40) != 0 {
+                // Check if IRQ is ready (bit 6 of IRQST set)
+                if (self.irqst & 0x40) != 0 {
+                    // Clear IRQST bit 6 (keyboard IRQ)
+                    self.irqst &= !0x40;
+                    return true;  // Assert IRQ line
+                } else {
+                    // IRQ overflow - keyboard IRQ already pending
+                    // Set SKSTAT bit 6 (keyboard overrun)
+                    self.skstat &= !0x40;
+                }
+            }
+        }
+
+        // Update shift/ctrl state in SKSTAT
+        self.shift_pressed = shift;
+        self.ctrl_pressed = ctrl;
+
+        // Update SKSTAT bit 3 (shift key status, 0 = pressed, 1 = not pressed)
+        if shift {
+            self.skstat &= !0x08;
+        } else {
+            self.skstat |= 0x08;
+        }
+
+        false  // Don't assert IRQ
+    }
+
+    /// Check if any enabled POKEY interrupt is active
+    /// Returns true if IRQ line should be asserted
+    pub fn irq_active(&self) -> bool {
+        // For each interrupt source, check if enabled (IRQEN) and active (IRQST low)
+        // IRQST bits are inverted: 0 = IRQ active, 1 = no IRQ
+        // IRQEN bits: 1 = enabled, 0 = disabled
+
+        // Check each interrupt source:
+        // Bit 0: Timer 1 IRQ
+        // Bit 1: Timer 2 IRQ
+        // Bit 2: Timer 4 IRQ
+        // Bit 3: Serial output transmission complete
+        // Bit 4: Serial output data needed
+        // Bit 5: Serial input data ready
+        // Bit 6: Keyboard IRQ
+        // Bit 7: Break key IRQ
+
+        for bit in 0..8 {
+            let mask = 1 << bit;
+            let enabled = (self.irqen & mask) != 0;
+            let active = (self.irqst & mask) == 0;  // IRQST is inverted
+
+            if enabled && active {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Write to IRQEN register and return new IRQ line state
+    /// Per Altirra hardware docs: "the status bit for a disabled interrupt is always locked to a 1"
+    /// This means when IRQEN bits are cleared, corresponding IRQST bits are set (interrupt acknowledged)
+    pub fn write_irqen(&mut self, val: u8) -> bool {
+        // For each bit that is being disabled (was 1, now 0), set corresponding IRQST bit to 1
+        let newly_disabled = self.irqen & !val;  // Bits that were enabled, now disabled
+        self.irqst |= newly_disabled;  // Set those IRQST bits to 1 (inactive)
+
+        self.irqen = val;
+        self.irq_active()
+    }
+
+    /// Handle key release event
+    /// Returns true if IRQ line should be asserted
+    pub fn key_release(&mut self) -> bool {
+        self.kbcode = 0xFF;  // No key pressed
+        self.skstat |= 0x04;  // Set bit 2 (key not ready, 1 = no key)
+        self.last_key_code = 0xFF;
+        self.irq_active()  // Return current IRQ state
     }
 }

@@ -9,3 +9,4 @@ pub mod antic;
 pub mod gtia;
 pub mod pokey;
 pub mod pia;
+pub mod input;

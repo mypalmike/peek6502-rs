@@ -403,6 +403,34 @@ impl Cpu {
         self.cycles_remaining = 0;
     }
 
+    pub fn irq(&mut self, bus: &mut dyn Bus) {
+        // IRQ sequence (7 cycles):
+        // 1. Push PCH to stack
+        // 2. Push PCL to stack
+        // 3. Push status (with B=0, bit 5=1) to stack
+        // 4. Set I flag
+        // 5-6. Read IRQ/BRK vector from $FFFE/$FFFF
+        // 7. Jump to handler
+
+        // Push PC (high byte first)
+        self.stack_push_byte(bus, (self.pc >> 8) as u8);
+        self.stack_push_byte(bus, (self.pc & 0xFF) as u8);
+
+        // Push status register (B flag clear, bit 5 set)
+        let status = self.get_status(false);  // false = B flag clear for IRQ
+        self.stack_push_byte(bus, status);
+
+        // Set I flag (disable further IRQs during IRQ handling)
+        self.i = true;
+
+        // Load PC from IRQ/BRK vector
+        self.pc = bus.read_word(VECTOR_IRQBRK);
+
+        // IRQ sequence is complete - next tick() should execute the instruction at the handler
+        // The 7-cycle cost is implicit in the operations we just performed
+        self.cycles_remaining = 0;
+    }
+
     /// Print trace output for debugging (shows PC, registers, and key zero-page vectors)
     fn print_trace(&self, bus: &mut dyn Bus) {
         // Read key zero-page locations (OS vectors)
@@ -441,6 +469,13 @@ impl Cpu {
                 bus.clear_nmi();
                 self.nmi(bus);
                 return 7;  // NMI takes 7 cycles
+            }
+
+            // Check for IRQ at end of instruction (before starting next instruction)
+            // IRQ can be masked by the I flag, unlike NMI
+            if !self.i && bus.irq_asserted() {
+                self.irq(bus);
+                return 7;  // IRQ takes 7 cycles
             }
 
             // Trace output before executing instruction

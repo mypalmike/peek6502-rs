@@ -34,4 +34,9 @@ pub trait Bus {
     /// Clear the NMI line
     /// Called after CPU has acknowledged the NMI
     fn clear_nmi(&mut self);
+
+    /// Check if IRQ (Interrupt Request) line is asserted
+    /// The 6502 checks this before each instruction (unless I flag is set)
+    /// The IRQ line is shared among multiple devices (POKEY, PIA, PBI)
+    fn irq_asserted(&self) -> bool;
 }

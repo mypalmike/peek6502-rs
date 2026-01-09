@@ -1,5 +1,6 @@
 use atari800_rs::atari800::Atari800;
 use atari800_rs::functional_test::FunctionalTest;
+use atari800_rs::input;
 use std::env;
 use std::time::{Duration, Instant};
 use sdl2::pixels::PixelFormatEnum;
@@ -135,14 +136,36 @@ fn run_with_sdl(speed_limit: bool) {
     let mut frame_count: u32 = 0;
 
     'running: loop {
+        // Get current keyboard modifier state before processing events
+        let keyboard_state = event_pump.keyboard_state();
+        let shift = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LShift) ||
+                   keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RShift);
+        let ctrl = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LCtrl) ||
+                  keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RCtrl);
+
         // Handle events
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
+                Event::Quit { .. } => break 'running,
+
+                Event::KeyDown { keycode: Some(keycode), .. } => {
+                    // Check for ESC to quit
+                    if keycode == Keycode::Escape {
+                        break 'running;
+                    }
+
+                    // Convert SDL keycode to Atari key code
+                    if let Some(atari_key) = input::sdl_to_atari(keycode) {
+                        // Send key press to emulator with current modifier state
+                        atari800.handle_key_press(atari_key, shift, ctrl);
+                    }
+                }
+
+                Event::KeyUp { .. } => {
+                    // Clear keyboard state on any key release
+                    atari800.handle_key_release();
+                }
+
                 _ => {}
             }
         }

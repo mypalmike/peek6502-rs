@@ -27,6 +27,9 @@ pub struct Atari800 {
 
     // NMI line (6502 hardware interrupt line)
     nmi_line: bool,
+
+    // IRQ line (6502 hardware interrupt line, shared by POKEY, PIA, PBI)
+    irq_line: bool,
 }
 
 impl Atari800 {
@@ -42,6 +45,7 @@ impl Atari800 {
             master_cycle: 0,
             cpu_halted: false,
             nmi_line: false,
+            irq_line: false,
         };
 
         // Reset CPU after construction to load PC from reset vector
@@ -291,6 +295,20 @@ impl Atari800 {
         self.cpu.trace_remaining = count;
     }
 
+    /// Handle keyboard key press event
+    /// Calls POKEY to update keyboard registers and manage IRQ line
+    pub fn handle_key_press(&mut self, atari_key_code: u8, shift: bool, ctrl: bool) {
+        if self.pokey.key_press(atari_key_code, shift, ctrl) {
+            self.irq_line = true;
+        }
+    }
+
+    /// Handle keyboard key release event
+    /// Clears the keyboard code register
+    pub fn handle_key_release(&mut self) {
+        self.irq_line = self.pokey.key_release();
+    }
+
     /// Advance ANTIC scanline counter (for simulating video timing in instruction-level mode)
     /// Called periodically during CPU execution to keep VCOUNT realistic
     pub fn advance_scanline(&mut self) {
@@ -343,7 +361,14 @@ impl Bus for Atari800 {
             0xD100..=0xD1FF => {}
 
             // POKEY registers ($D200-$D2FF)
-            0xD200..=0xD2FF => self.pokey.write_register(addr, val),
+            0xD200..=0xD2FF => {
+                // Special handling for IRQEN register ($D20E)
+                if (addr & 0x0F) == 0x0E {
+                    self.irq_line = self.pokey.write_irqen(val);
+                } else {
+                    self.pokey.write_register(addr, val);
+                }
+            }
 
             // PIA registers ($D300-$D3FF)
             0xD300..=0xD3FF => self.pia.write_register(addr, val),
@@ -366,5 +391,9 @@ impl Bus for Atari800 {
     fn clear_nmi(&mut self) {
         self.nmi_line = false;
         self.antic.clear_nmi();
+    }
+
+    fn irq_asserted(&self) -> bool {
+        self.irq_line
     }
 }
