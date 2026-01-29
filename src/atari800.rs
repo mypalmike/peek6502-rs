@@ -71,12 +71,11 @@ impl Atari800 {
     }
 
     /// Execute one CPU instruction without debugger (for normal emulation)
-    /// Execute one CPU instruction and return the number of cycles used
-    pub fn tick_cpu(&mut self) -> u32 {
-        // Check if ANTIC is asserting NMI
-        if self.antic.is_nmi_asserted() {
-            self.nmi_line = true;
-        }
+    /// Returns true if ANTIC completed a frame (for rendering/speed limiting)
+    pub fn tick_cpu(&mut self) -> bool {
+        // Wire-OR NMI from all sources (ANTIC and PIA)
+        // NMI line is shared, just like IRQ line
+        self.nmi_line = self.antic.is_nmi_asserted() || self.pia.is_nmi_asserted();
 
         // Take ownership of CPU temporarily
         let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
@@ -97,7 +96,9 @@ impl Atari800 {
         // Restore CPU
         self.cpu = cpu;
 
-        cycles
+        // Update ANTIC video timing based on cycles executed
+        // ANTIC manages its own scanline advancement and signals frame completion
+        self.antic.tick_cycles(cycles)
     }
 
     /// Cycle-accurate tick - executes one machine cycle
@@ -256,6 +257,9 @@ impl Atari800 {
         // Clear framebuffer to background color
         self.gtia.clear_framebuffer();
 
+        // Reset ANTIC display list state for new frame (simulates vertical blank)
+        self.antic.start_frame();
+
         // Process each scanline through ANTIC and GTIA
         for scanline in 0..192 {
             // ANTIC generates color indices from display list
@@ -347,6 +351,9 @@ impl Bus for Atari800 {
             // Unused I/O space ($D500-$D7FF)
             0xD500..=0xD7FF => 0xFF,
 
+            // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
+            0xC000..=0xCFFF => 0xFF,
+
             // Regular memory (RAM/ROM)
             _ => self.mem.get_byte(addr),
         }
@@ -379,18 +386,16 @@ impl Bus for Atari800 {
             // Unused I/O space ($D500-$D7FF) - ignore writes
             0xD500..=0xD7FF => {}
 
+            // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
+            0xC000..=0xCFFF => {}
+
             // Regular memory (RAM/ROM)
             _ => self.mem.set_byte(addr, val),
         }
     }
 
-    fn nmi_pending(&mut self) -> bool {
+    fn nmi_asserted(&self) -> bool {
         self.nmi_line
-    }
-
-    fn clear_nmi(&mut self) {
-        self.nmi_line = false;
-        self.antic.clear_nmi();
     }
 
     fn irq_asserted(&self) -> bool {

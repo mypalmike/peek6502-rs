@@ -70,10 +70,8 @@ impl Mem {
 
         // Debug: Watch DOSVEC writes
         if addr == 0x000A || addr == 0x000B {
-            eprintln!("DOSVEC[${:04X}] = ${:02X}", addr, val);
             if addr == 0x000B {
                 let dosvec = self.ram[0x000A] as u16 | ((val as u16) << 8);
-                eprintln!("  -> DOSVEC now = ${:04X}", dosvec);
             }
         }
 

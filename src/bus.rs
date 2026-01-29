@@ -27,13 +27,10 @@ pub trait Bus {
         self.write(addr.wrapping_add(1), hi);
     }
 
-    /// Check if NMI (Non-Maskable Interrupt) is pending
-    /// The 6502 checks this at the end of each instruction
-    fn nmi_pending(&mut self) -> bool;
-
-    /// Clear the NMI line
-    /// Called after CPU has acknowledged the NMI
-    fn clear_nmi(&mut self);
+    /// Check if NMI (Non-Maskable Interrupt) line is asserted
+    /// NMI is edge-triggered - the CPU detects 1→0 transitions internally
+    /// This method just returns the current line state (no side effects)
+    fn nmi_asserted(&self) -> bool;
 
     /// Check if IRQ (Interrupt Request) line is asserted
     /// The 6502 checks this before each instruction (unless I flag is set)

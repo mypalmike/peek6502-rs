@@ -24,12 +24,8 @@ impl Bus for TestBus {
         self.mem.set_byte(addr, val);
     }
 
-    fn nmi_pending(&mut self) -> bool {
+    fn nmi_asserted(&self) -> bool {
         false  // No NMI for tests
-    }
-
-    fn clear_nmi(&mut self) {
-        // No-op for tests
     }
 
     fn irq_asserted(&self) -> bool {

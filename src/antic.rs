@@ -43,6 +43,9 @@ pub struct Antic {
     // NMI line state
     nmi_asserted: bool,  // true = ANTIC is asserting NMI line
 
+    // Cycle tracking for scanline advancement
+    cycle_accumulator: u32,  // Accumulated CPU cycles since last scanline advance
+
     // Scanline buffer (pixels to be displayed)
     pub scanline_buffer: [u8; 384],  // Color indices for current scanline
 }
@@ -74,6 +77,7 @@ impl Antic {
             nmien: 0,
             nmires: 0,
             nmi_asserted: false,
+            cycle_accumulator: 0,
             scanline_buffer: [0; 384],
         }
     }
@@ -123,18 +127,15 @@ impl Antic {
             0x00 => {
                 self.dmactl = val;
                 self.dma_enabled = (val & 0x20) != 0; // Bit 5 enables DMA
-                eprintln!("DMACTL=${:02X} (DMA={}, playfield={:02b})", val, self.dma_enabled, val & 0x03);
             }
             0x01 => self.chactl = val,
             0x02 => {
                 self.dlistl = val;
                 self.update_dlist_ptr();
-                eprintln!("DLISTL=${:02X}, ptr now=${:04X}", val, self.dlist_ptr);
             }
             0x03 => {
                 self.dlisth = val;
                 self.update_dlist_ptr();
-                eprintln!("DLISTH=${:02X}, ptr now=${:04X}", val, self.dlist_ptr);
             }
             0x04 => self.hscrol = val,
             0x05 => self.vscrol = val,
@@ -143,7 +144,6 @@ impl Antic {
             0x0A => self.wsync = val,   // CPU write to WSYNC halts until HSYNC
             0x0E => {
                 self.nmien = val;
-                eprintln!("NMIEN=${:02X} (VBI={}, DLI={})", val, (val & 0x40) != 0, (val & 0x80) != 0);
             }
             0x0F => {
                 // Writing to NMIRES clears NMI status bits
@@ -175,6 +175,15 @@ impl Antic {
         self.dlist_index = self.dlist_ptr;  // Reset to start of display list
     }
 
+    /// Reset display list processing state for the start of a new frame.
+    /// On real hardware this happens during vertical blank when ANTIC reloads
+    /// the display list pointer.
+    pub fn start_frame(&mut self) {
+        self.dlist_index = self.dlist_ptr;
+        self.lines_remaining = 0;
+        self.mode_line = 0;
+    }
+
     /// Simulate one frame of ANTIC video timing (for instruction-level emulation)
     /// This advances through all scanlines to keep VCOUNT realistic for OS timing loops
     /// Should be called before each frame render
@@ -199,23 +208,54 @@ impl Antic {
         self.scanline = (self.scanline + 1) % 262;
         self.vcount = (self.scanline / 2) as u8;  // VCOUNT = scanline / 2
 
-        // Assert NMI at start of VBLANK (scanline 248) if VBI is enabled
+        // Pulse NMI at start of VBLANK (scanline 248) if VBI is enabled
         // VBLANK spans scanlines 248-261, then 0-9 (22 lines total)
+        // NMI is edge-triggered, so we assert for one scanline then deassert
         if self.scanline == 248 && self.is_vbi_enabled() {
             self.nmi_asserted = true;
             self.nmires |= 0x40;  // Set VBI flag in NMIST
-            eprintln!("VBI: NMI asserted at scanline 248");
+        }
+
+        // Deassert NMI after one scanline (creates falling edge for CPU to detect)
+        if self.scanline == 249 {
+            self.nmi_asserted = false;
         }
     }
 
+    /// Tick ANTIC by the specified number of CPU cycles
+    /// ANTIC advances scanlines every 114 cycles (one scanline = 114 color clocks for NTSC)
+    /// This keeps VCOUNT realistic for OS timing loops
+    /// Returns true if a frame just completed (scanline wrapped to 0)
+    pub fn tick_cycles(&mut self, cycles: u32) -> bool {
+        self.cycle_accumulator += cycles;
+        let mut frame_complete = false;
+
+        // Advance scanline every 114 cycles
+        while self.cycle_accumulator >= 114 {
+            self.cycle_accumulator -= 114;
+            let prev_scanline = self.scanline;
+            self.advance_scanline();
+
+            // Frame completes when scanline wraps from 261 to 0
+            if prev_scanline == 261 && self.scanline == 0 {
+                frame_complete = true;
+            }
+        }
+
+        frame_complete
+    }
+
     /// Check if ANTIC is asserting the NMI line
+    /// Returns current line state (no side effects)
     pub fn is_nmi_asserted(&self) -> bool {
         self.nmi_asserted
     }
 
-    /// Clear the NMI assertion (called after CPU acknowledges NMI)
+    /// Clear NMI flag in NMIST register (called when software reads NMIST)
+    /// This does NOT affect the NMI line - that pulses automatically
     pub fn clear_nmi(&mut self) {
-        self.nmi_asserted = false;
+        // Reading NMIST ($D40F) clears the NMI status bits but not the line
+        self.nmires = 0;
     }
 
     /// Get current scanline (for debugging and timing)
@@ -230,9 +270,9 @@ impl Antic {
         self.scanline_buffer.fill(0);
 
         // Only process if DMA is enabled
-        if !self.dma_enabled {
-            return;
-        }
+        // if !self.dma_enabled {
+        //     return;
+        // }
 
         // If we need to fetch a new display list instruction
         if self.lines_remaining == 0 {
@@ -324,9 +364,11 @@ impl Antic {
             let char_code = mem.get_byte(self.screen_ptr + char_col);
 
             // Get character bitmap for this scanline
-            // Each character is 8 bytes, mode_line is the current scanline within the character
-            let char_addr = char_base + (char_code as u16) * 8 + (self.mode_line as u16);
-            let char_data = mem.get_byte(char_addr);
+            // Bit 7 = inverse video, bits 0-6 = character index
+            let inverse = (char_code & 0x80) != 0;
+            let font_index = (char_code & 0x7F) as u16;
+            let char_addr = char_base + font_index * 8 + (self.mode_line as u16);
+            let char_data = if inverse { mem.get_byte(char_addr) ^ 0xFF } else { mem.get_byte(char_addr) };
 
             // Convert character bitmap to pixels (8 pixels per character)
             for bit in 0..8 {

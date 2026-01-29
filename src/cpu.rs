@@ -38,6 +38,10 @@ pub struct Cpu {
 
     // Debugging/tracing
     pub trace_remaining: u32,       // Number of instructions to trace (0 = no trace)
+
+    // NMI edge detection (NMI is edge-triggered, not level-triggered like IRQ)
+    nmi_prev: bool,                 // Previous NMI line state (for edge detection)
+    nmi_pending: bool,              // Latched NMI waiting to be serviced
 }
 
 impl Cpu {
@@ -60,6 +64,8 @@ impl Cpu {
             cycles_remaining: 0,
             current_opcode: 0,
             trace_remaining: 0,
+            nmi_prev: false,
+            nmi_pending: false,
         };
 
         new_cpu.dispatch[0x00 as usize] = Cpu::op_brk;
@@ -453,26 +459,29 @@ impl Cpu {
             0x00 => "BRK".to_string(),
             _ => format!("{:02X}", opcode),
         };
-
-        eprintln!(
-            "PC={:04X} A={:02X} X={:02X} Y={:02X} S={:02X} [{:12}] | $0216={:04X} $0222={:04X} $0200={:04X}",
-            self.pc, self.a, self.x, self.y, self.s, opcode_desc,
-            vec_0216, vec_0222, vec_0200
-        );
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {
         if self.cycles_remaining == 0 {
-            // Check for NMI at end of instruction (before starting next instruction)
-            // The 6502 checks NMI at the end of each instruction
-            if bus.nmi_pending() {
-                bus.clear_nmi();
+            // Sample NMI line and detect falling edge (edge-triggered interrupt)
+            // NMI is triggered by a 1→0 transition, not by level
+            let nmi_current = bus.nmi_asserted();
+
+            // Detect falling edge (1→0 transition)
+            if self.nmi_prev && !nmi_current {
+                self.nmi_pending = true;  // Latch the NMI event
+            }
+            self.nmi_prev = nmi_current;
+
+            // Service latched NMI (if any)
+            if self.nmi_pending {
+                self.nmi_pending = false;  // Clear the latch
                 self.nmi(bus);
                 return 7;  // NMI takes 7 cycles
             }
 
             // Check for IRQ at end of instruction (before starting next instruction)
-            // IRQ can be masked by the I flag, unlike NMI
+            // IRQ is level-triggered (can be masked by the I flag)
             if !self.i && bus.irq_asserted() {
                 self.irq(bus);
                 return 7;  // IRQ takes 7 cycles

@@ -118,16 +118,11 @@ fn run_with_sdl(speed_limit: bool) {
     // Create Atari800 instance
     let mut atari800 = Atari800::new();
 
-    // Check DOSVEC immediately after boot
-    eprintln!("At startup: DOSVEC[$000A]=${:02X}, DOSVEC[$000B]=${:02X}",
-        atari800.read_mem(0x000A), atari800.read_mem(0x000B));
-
     // Enable brief tracing after 5 seconds to see where we are
     let mut trace_enabled = false;
 
     // Initialize timing for speed limiting
-    const CPU_FREQ_HZ: f64 = 1_789_772.5;  // NTSC Atari 8-bit CPU frequency
-    const FRAME_RATE: f64 = 59.92;          // NTSC frame rate
+    const FRAME_RATE: f64 = 59.92;  // NTSC frame rate (for speed limiting only)
     let frame_duration = Duration::from_secs_f64(1.0 / FRAME_RATE);
     let mut next_frame_time = Instant::now();
 
@@ -162,40 +157,27 @@ fn run_with_sdl(speed_limit: bool) {
                 }
 
                 Event::KeyUp { .. } => {
-                    // Clear keyboard state on any key release
-                    atari800.handle_key_release();
+                    // Don't clear KBCODE on key release - let it stay until next key press
+                    // This matches Atari hardware behavior
                 }
 
                 _ => {}
             }
         }
 
-        // Execute CPU for one frame (~29868 cycles at 1.79 MHz, 59.92 FPS NTSC)
-        // This allows the OS and software to run between frames
-        // Advance ANTIC scanline every ~114 cycles to simulate video timing (262 scanlines/frame)
-        const CYCLES_PER_FRAME: u32 = (CPU_FREQ_HZ / FRAME_RATE) as u32;  // ~29868
-
-        let mut cycles_executed = 0;
-        let mut cycle_count = 0;
-
-        while cycles_executed < CYCLES_PER_FRAME {
-            let cycles = atari800.tick_cpu();  // Execute one CPU instruction, returns cycles used
-            cycles_executed += cycles;
-            cycle_count += cycles;
-
-            // Advance scanline every 114 cycles to keep VCOUNT realistic for OS timing loops
-            if cycle_count >= 114 {
-                cycle_count -= 114;
-                atari800.advance_scanline();
+        // Run CPU until ANTIC signals frame completion
+        // ANTIC internally manages video timing (262 scanlines = 1 frame)
+        loop {
+            if atari800.tick_cpu() {
+                // Frame complete - render and break
+                atari800.render();
+                break;
             }
         }
 
-        // Render frame
-        atari800.render();
-
-        // NOTE: VBI disabled - OS boot gets stuck in VBI handlers
-        // TODO: Need to understand why VBI handlers loop infinitely
-        // atari800.trigger_vbi();
+        // Trigger VBI (Vertical Blank Interrupt) - required for OS timing and disk I/O
+        // Now that IRQ handling is properly implemented, VBI should work correctly
+        atari800.trigger_vbi();
 
         // Copy framebuffer to SDL texture
         texture
@@ -221,18 +203,12 @@ fn run_with_sdl(speed_limit: bool) {
 
         frame_count += 1;
 
-        // Check DOSVEC after first frame
-        if frame_count == 1 {
-            eprintln!("After 1 frame: DOSVEC=${:02X}{:02X}",
-                atari800.read_mem(0x000B), atari800.read_mem(0x000A));
-        }
-
         // Enable tracing after 5 seconds (300 frames) to see where execution is
-        if frame_count == 300 && !trace_enabled {
-            eprintln!("\n=== ENABLING CPU TRACE ===");
-            atari800.enable_cpu_trace(100);
-            trace_enabled = true;
-        }
+        // if frame_count == 300 && !trace_enabled {
+        //     eprintln!("\n=== ENABLING CPU TRACE ===");
+        //     atari800.enable_cpu_trace(100);
+        //     trace_enabled = true;
+        // }
     }
 
     println!("Shutting down...");

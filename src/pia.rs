@@ -71,4 +71,12 @@ impl Pia {
     pub fn set_portb_input(&mut self, val: u8) {
         self.portb_input = val;
     }
+
+    /// Check if PIA is asserting the NMI line
+    /// Currently returns false (PROCEED button NMI not implemented)
+    pub fn is_nmi_asserted(&self) -> bool {
+        // TODO: Implement PROCEED button NMI (triggered by special key combination)
+        // Port B bit 7 = self-test (SHIFT+CTRL+RESET) can trigger NMI
+        false
+    }
 }
