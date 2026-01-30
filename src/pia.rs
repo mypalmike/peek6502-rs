@@ -2,14 +2,22 @@
 /// Handles joystick input, console switches, and OS ROM banking.
 ///
 /// Memory map: $D300-$D3FF
+///
+/// The 6520 PIA has 4 registers selected by RS1 (addr bit 1) and RS0 (addr bit 0):
+///   $D300 (RS1=0, RS0=0): PORTA data or DDRA (selected by PACTL bit 2)
+///   $D301 (RS1=0, RS0=1): PACTL (Port A control register)
+///   $D302 (RS1=1, RS0=0): PORTB data or DDRB (selected by PBCTL bit 2)
+///   $D303 (RS1=1, RS0=1): PBCTL (Port B control register)
 pub struct Pia {
-    // Port A - Joystick ports 1 & 2, console switches
-    porta: u8,          // $D300 - Port A data
-    ddra: u8,           // $D301 - Port A data direction (0=input, 1=output)
+    // Port A - Joystick ports 1 & 2
+    porta: u8,          // Port A output register
+    ddra: u8,           // Port A data direction (0=input, 1=output)
+    pactl: u8,          // Port A control register
 
-    // Port B - Joystick ports 3 & 4, OS ROM control
-    portb: u8,          // $D302 - Port B data
-    ddrb: u8,           // $D303 - Port B data direction
+    // Port B - Joystick ports 3 & 4, console switches
+    portb: u8,          // Port B output register
+    ddrb: u8,           // Port B data direction
+    pbctl: u8,          // Port B control register
 
     // Input state (what's actually on the pins)
     porta_input: u8,
@@ -21,9 +29,11 @@ impl Pia {
         Pia {
             porta: 0xFF,
             ddra: 0,
+            pactl: 0,           // Bit 2 = 0: $D300 accesses DDRA initially
             portb: 0xFF,
             ddrb: 0,
-            porta_input: 0xFF,  // No joystick input
+            pbctl: 0,           // Bit 2 = 0: $D302 accesses DDRB initially
+            porta_input: 0xFF,  // No joystick input (active low)
             portb_input: 0xFF,  // No joystick input
         }
     }
@@ -31,23 +41,38 @@ impl Pia {
     /// Execute one machine cycle of PIA operation
     pub fn tick(&mut self) {
         // PIA is mostly passive, responding to reads/writes
-        // Could add joystick scanning logic here in the future
     }
 
     /// Read from a PIA register
     pub fn read_register(&self, addr: u16) -> u8 {
         match addr & 0x03 {
             0x00 => {
-                // PORTA - bits set as input (0 in DDRA) read from porta_input
-                // bits set as output (1 in DDRA) read from porta
-                (self.porta & self.ddra) | (self.porta_input & !self.ddra)
+                if (self.pactl & 0x04) != 0 {
+                    // PACTL bit 2 set: read PORTA data register
+                    // Input pins (DDR=0) read from external input, output pins (DDR=1) read latch
+                    (self.porta & self.ddra) | (self.porta_input & !self.ddra)
+                } else {
+                    // PACTL bit 2 clear: read DDRA
+                    self.ddra
+                }
             }
-            0x01 => self.ddra,
+            0x01 => {
+                // Read PACTL (bits 7,6 are IRQ flags, read-only; cleared on read)
+                self.pactl
+            }
             0x02 => {
-                // PORTB - same logic as PORTA
-                (self.portb & self.ddrb) | (self.portb_input & !self.ddrb)
+                if (self.pbctl & 0x04) != 0 {
+                    // PBCTL bit 2 set: read PORTB data register
+                    (self.portb & self.ddrb) | (self.portb_input & !self.ddrb)
+                } else {
+                    // PBCTL bit 2 clear: read DDRB
+                    self.ddrb
+                }
             }
-            0x03 => self.ddrb,
+            0x03 => {
+                // Read PBCTL
+                self.pbctl
+            }
             _ => 0xFF,
         }
     }
@@ -55,10 +80,32 @@ impl Pia {
     /// Write to a PIA register
     pub fn write_register(&mut self, addr: u16, val: u8) {
         match addr & 0x03 {
-            0x00 => self.porta = val,
-            0x01 => self.ddra = val,
-            0x02 => self.portb = val,
-            0x03 => self.ddrb = val,
+            0x00 => {
+                if (self.pactl & 0x04) != 0 {
+                    // PACTL bit 2 set: write PORTA data register
+                    self.porta = val;
+                } else {
+                    // PACTL bit 2 clear: write DDRA
+                    self.ddra = val;
+                }
+            }
+            0x01 => {
+                // Write PACTL (bits 7,6 are read-only IRQ flags)
+                self.pactl = (self.pactl & 0xC0) | (val & 0x3F);
+            }
+            0x02 => {
+                if (self.pbctl & 0x04) != 0 {
+                    // PBCTL bit 2 set: write PORTB data register
+                    self.portb = val;
+                } else {
+                    // PBCTL bit 2 clear: write DDRB
+                    self.ddrb = val;
+                }
+            }
+            0x03 => {
+                // Write PBCTL (bits 7,6 are read-only IRQ flags)
+                self.pbctl = (self.pbctl & 0xC0) | (val & 0x3F);
+            }
             _ => {}
         }
     }
@@ -73,10 +120,7 @@ impl Pia {
     }
 
     /// Check if PIA is asserting the NMI line
-    /// Currently returns false (PROCEED button NMI not implemented)
     pub fn is_nmi_asserted(&self) -> bool {
-        // TODO: Implement PROCEED button NMI (triggered by special key combination)
-        // Port B bit 7 = self-test (SHIFT+CTRL+RESET) can trigger NMI
         false
     }
 }

@@ -73,10 +73,6 @@ impl Atari800 {
     /// Execute one CPU instruction without debugger (for normal emulation)
     /// Returns true if ANTIC completed a frame (for rendering/speed limiting)
     pub fn tick_cpu(&mut self) -> bool {
-        // Wire-OR NMI from all sources (ANTIC and PIA)
-        // NMI line is shared, just like IRQ line
-        self.nmi_line = self.antic.is_nmi_asserted() || self.pia.is_nmi_asserted();
-
         // Take ownership of CPU temporarily
         let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
 
@@ -104,7 +100,13 @@ impl Atari800 {
 
         // Update ANTIC video timing based on cycles executed
         // ANTIC manages its own scanline advancement and signals frame completion
-        self.antic.tick_cycles(cycles)
+        let frame_complete = self.antic.tick_cycles(cycles);
+
+        // Update NMI line AFTER ANTIC advances so CPU sees the assertion
+        // on the next instruction (NMI is edge-triggered in cpu.tick())
+        self.nmi_line = self.antic.is_nmi_asserted() || self.pia.is_nmi_asserted();
+
+        frame_complete
     }
 
     /// Cycle-accurate tick - executes one machine cycle
@@ -363,6 +365,9 @@ impl Bus for Atari800 {
             // Unused I/O space ($D500-$D7FF)
             0xD500..=0xD7FF => 0xFF,
 
+            // Cartridge space ($A000-$BFFF) - no cartridge inserted, return open bus
+            0xA000..=0xBFFF => 0xFF,
+
             // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
             0xC000..=0xCFFF => 0xFF,
 
@@ -397,6 +402,9 @@ impl Bus for Atari800 {
 
             // Unused I/O space ($D500-$D7FF) - ignore writes
             0xD500..=0xD7FF => {}
+
+            // Cartridge space ($A000-$BFFF) - no cartridge, ignore writes
+            0xA000..=0xBFFF => {}
 
             // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
             0xC000..=0xCFFF => {}

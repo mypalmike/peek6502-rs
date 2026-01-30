@@ -121,6 +121,7 @@ fn run_with_sdl(speed_limit: bool) {
     // Enable brief tracing after 5 seconds to see where we are
     let mut trace_enabled = false;
 
+
     // Initialize timing for speed limiting
     const FRAME_RATE: f64 = 59.92;  // NTSC frame rate (for speed limiting only)
     let frame_duration = Duration::from_secs_f64(1.0 / FRAME_RATE);
@@ -168,15 +169,10 @@ fn run_with_sdl(speed_limit: bool) {
         // ANTIC internally manages video timing (262 scanlines = 1 frame)
         loop {
             if atari800.tick_cpu() {
-                // Frame complete - render and break
                 atari800.render();
                 break;
             }
         }
-
-        // Trigger VBI (Vertical Blank Interrupt) - required for OS timing and disk I/O
-        // Now that IRQ handling is properly implemented, VBI should work correctly
-        atari800.trigger_vbi();
 
         // Copy framebuffer to SDL texture
         texture

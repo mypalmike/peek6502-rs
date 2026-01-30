@@ -467,8 +467,9 @@ impl Cpu {
             // NMI is triggered by a 1→0 transition, not by level
             let nmi_current = bus.nmi_asserted();
 
-            // Detect falling edge (1→0 transition)
-            if self.nmi_prev && !nmi_current {
+            // Detect rising edge of nmi_asserted (false→true), which corresponds
+            // to the falling edge of the physical /NMI pin (active-low)
+            if !self.nmi_prev && nmi_current {
                 self.nmi_pending = true;  // Latch the NMI event
             }
             self.nmi_prev = nmi_current;
@@ -477,14 +478,16 @@ impl Cpu {
             if self.nmi_pending {
                 self.nmi_pending = false;  // Clear the latch
                 self.nmi(bus);
-                return 7;  // NMI takes 7 cycles
+                self.cycles_remaining = 6;  // 7 cycles total: 1 now + 6 remaining
+                return 1;
             }
 
             // Check for IRQ at end of instruction (before starting next instruction)
             // IRQ is level-triggered (can be masked by the I flag)
             if !self.i && bus.irq_asserted() {
                 self.irq(bus);
-                return 7;  // IRQ takes 7 cycles
+                self.cycles_remaining = 6;  // 7 cycles total: 1 now + 6 remaining
+                return 1;
             }
 
             // Trace output before executing instruction

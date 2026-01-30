@@ -17,7 +17,8 @@ pub struct Gtia {
     vdelay: u8,         // $D01C - Vertical delay
     gractl: u8,         // $D01D - Graphics control
     hitclr: u8,         // $D01E - Clear collision registers
-    consol: u8,         // $D01F - Console switches
+    consol: u8,         // $D01F - Console switches (write: speaker latch)
+    consol_input: u8,   // $D01F - Console button state (read: physical buttons)
 
     // Collision detection (read-only)
     m0pf: u8,           // $D000 - Missile 0 to playfield
@@ -58,7 +59,8 @@ impl Gtia {
             vdelay: 0,
             gractl: 0,
             hitclr: 0,
-            consol: 0x07,  // Bits 0-2: START, SELECT, OPTION (1 = not pressed)
+            consol: 0x07,
+            consol_input: 0x07,  // Bits 0-2: START, SELECT, OPTION (1 = not pressed)
             m0pf: 0,
             m1pf: 0,
             m2pf: 0,
@@ -127,7 +129,7 @@ impl Gtia {
             0x12 => self.trig[2],
             0x13 => self.trig[3],
             // Console switches
-            0x1F => self.consol,
+            0x1F => self.consol_input,
             // Color registers (0x16-0x1A) and other write-only registers return 0xFF
             _ => 0xFF,
         }
