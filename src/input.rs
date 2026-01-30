@@ -69,6 +69,7 @@ pub const AKEY_PLUS: u8 = 0x06;     // Shift+= on Atari
 pub const AKEY_LESSTHAN: u8 = 0x36; // Shift+, on Atari
 pub const AKEY_GREATERTHAN: u8 = 0x37; // Shift+. on Atari
 pub const AKEY_CAPS: u8 = 0x3c;
+pub const AKEY_ATARI: u8 = 0x27;  // Inverse video key
 
 // No key pressed
 pub const AKEY_NONE: u8 = 0xFF;

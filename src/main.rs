@@ -138,6 +138,8 @@ fn run_with_sdl(speed_limit: bool) {
                    keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RShift);
         let ctrl = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LCtrl) ||
                   keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RCtrl);
+        let host_alt = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LAlt) ||
+                      keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RAlt);
 
         // Handle events
         for event in event_pump.poll_iter() {
@@ -145,19 +147,28 @@ fn run_with_sdl(speed_limit: bool) {
                 Event::Quit { .. } => break 'running,
 
                 Event::KeyDown { scancode: Some(scancode), repeat: false, .. } => {
-                    // Check for ESC to quit
-                    if scancode == Scancode::Escape {
-                        break 'running;
-                    }
-
-                    // Convert SDL scancode to Atari base key code
-                    if let Some(atari_key) = input::scancode_to_atari(scancode) {
-                        // Send key press to emulator with current modifier state
+                    // Host Option+number: Atari console buttons
+                    if host_alt {
+                        match scancode {
+                            Scancode::Num1 => atari800.console_press(2), // OPTION
+                            Scancode::Num2 => atari800.console_press(1), // SELECT
+                            Scancode::Num3 => atari800.console_press(0), // START
+                            Scancode::Space => atari800.handle_key_press(input::AKEY_ATARI, shift, ctrl), // Inverse video
+                            _ => {}
+                        }
+                    } else if let Some(atari_key) = input::scancode_to_atari(scancode) {
                         atari800.handle_key_press(atari_key, shift, ctrl);
                     }
                 }
 
-                Event::KeyUp { .. } => {
+                Event::KeyUp { scancode: Some(scancode), .. } => {
+                    // Release console buttons
+                    match scancode {
+                        Scancode::Num1 => atari800.console_release(2), // OPTION
+                        Scancode::Num2 => atari800.console_release(1), // SELECT
+                        Scancode::Num3 => atari800.console_release(0), // START
+                        _ => {}
+                    }
                     atari800.handle_key_release();
                 }
 

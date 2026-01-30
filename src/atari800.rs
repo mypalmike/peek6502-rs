@@ -327,6 +327,17 @@ impl Atari800 {
         self.irq_line = self.pokey.key_release();
     }
 
+    /// Press a console button (OPTION/SELECT/START)
+    /// bit 0 = START, bit 1 = SELECT, bit 2 = OPTION (active-low: 0 = pressed)
+    pub fn console_press(&mut self, bit: u8) {
+        self.gtia.consol_input &= !(1 << bit);
+    }
+
+    /// Release a console button
+    pub fn console_release(&mut self, bit: u8) {
+        self.gtia.consol_input |= 1 << bit;
+    }
+
     /// Advance ANTIC scanline counter (for simulating video timing in instruction-level mode)
     /// Called periodically during CPU execution to keep VCOUNT realistic
     pub fn advance_scanline(&mut self) {

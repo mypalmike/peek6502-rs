@@ -18,7 +18,7 @@ pub struct Gtia {
     gractl: u8,         // $D01D - Graphics control
     hitclr: u8,         // $D01E - Clear collision registers
     consol: u8,         // $D01F - Console switches (write: speaker latch)
-    consol_input: u8,   // $D01F - Console button state (read: physical buttons)
+    pub consol_input: u8,   // $D01F - Console button state (read: physical buttons)
 
     // Collision detection (read-only)
     m0pf: u8,           // $D000 - Missile 0 to playfield
