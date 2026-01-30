@@ -178,9 +178,14 @@ impl Pokey {
         // Trigger interrupt on key code change
         let key_code_changed = atari_key_code != self.last_key_code;
 
+        // Combine base key code with modifier bits
+        let full_key_code = atari_key_code
+            | if shift { 0x40 } else { 0 }
+            | if ctrl { 0x80 } else { 0 };
+
         if key_code_changed {
             self.last_key_code = atari_key_code;
-            self.kbcode = atari_key_code;
+            self.kbcode = full_key_code;
 
             // Clear SKSTAT bit 2 (key ready, 0 = key available)
             self.skstat &= !0x04;

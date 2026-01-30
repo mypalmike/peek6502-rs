@@ -1,18 +1,16 @@
-/// Input handling - SDL to Atari key code mapping
+/// Input handling - SDL scancode to Atari key code mapping
 ///
-/// Maps SDL2 keyboard events to Atari 8-bit key codes.
-/// Key codes are defined as in the Atari 800 hardware:
-/// - Bits 0-5: Base key code
-/// - Bit 6: SHIFT modifier (0x40)
-/// - Bit 7: CTRL modifier (0x80)
+/// Uses SDL scancodes (physical key position) rather than keycodes so that
+/// modifier keys don't change which base key is detected. POKEY adds the
+/// SHIFT (bit 6) and CTRL (bit 7) modifier bits to the base key code.
 
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::Scancode;
 
 // Modifier masks
 pub const AKEY_SHFT: u8 = 0x40;
 pub const AKEY_CTRL: u8 = 0x80;
 
-// Letters (lowercase)
+// Letters (lowercase base codes)
 pub const AKEY_A: u8 = 0x3f;
 pub const AKEY_B: u8 = 0x15;
 pub const AKEY_C: u8 = 0x12;
@@ -59,61 +57,83 @@ pub const AKEY_ESCAPE: u8 = 0x1c;
 pub const AKEY_BACKSPACE: u8 = 0x34;
 pub const AKEY_TAB: u8 = 0x2c;
 
+// Punctuation / symbol keys
+pub const AKEY_SEMICOLON: u8 = 0x02;
+pub const AKEY_COMMA: u8 = 0x20;
+pub const AKEY_PERIOD: u8 = 0x22;
+pub const AKEY_SLASH: u8 = 0x26;
+pub const AKEY_MINUS: u8 = 0x0e;
+pub const AKEY_EQUALS: u8 = 0x0f;
+pub const AKEY_ASTERISK: u8 = 0x07; // Shift+8 on Atari
+pub const AKEY_PLUS: u8 = 0x06;     // Shift+= on Atari
+pub const AKEY_LESSTHAN: u8 = 0x36; // Shift+, on Atari
+pub const AKEY_GREATERTHAN: u8 = 0x37; // Shift+. on Atari
+pub const AKEY_CAPS: u8 = 0x3c;
+
 // No key pressed
 pub const AKEY_NONE: u8 = 0xFF;
 
-/// Convert SDL keycode to Atari key code
-/// Returns None if the key is not mapped
-pub fn sdl_to_atari(keycode: Keycode) -> Option<u8> {
-    match keycode {
+/// Convert SDL scancode to Atari base key code (bits 0-5 only).
+/// Modifier bits (SHIFT/CTRL) are added by POKEY based on modifier key state.
+/// Returns None if the scancode has no Atari mapping.
+pub fn scancode_to_atari(scancode: Scancode) -> Option<u8> {
+    match scancode {
         // Letters
-        Keycode::A => Some(AKEY_A),
-        Keycode::B => Some(AKEY_B),
-        Keycode::C => Some(AKEY_C),
-        Keycode::D => Some(AKEY_D),
-        Keycode::E => Some(AKEY_E),
-        Keycode::F => Some(AKEY_F),
-        Keycode::G => Some(AKEY_G),
-        Keycode::H => Some(AKEY_H),
-        Keycode::I => Some(AKEY_I),
-        Keycode::J => Some(AKEY_J),
-        Keycode::K => Some(AKEY_K),
-        Keycode::L => Some(AKEY_L),
-        Keycode::M => Some(AKEY_M),
-        Keycode::N => Some(AKEY_N),
-        Keycode::O => Some(AKEY_O),
-        Keycode::P => Some(AKEY_P),
-        Keycode::Q => Some(AKEY_Q),
-        Keycode::R => Some(AKEY_R),
-        Keycode::S => Some(AKEY_S),
-        Keycode::T => Some(AKEY_T),
-        Keycode::U => Some(AKEY_U),
-        Keycode::V => Some(AKEY_V),
-        Keycode::W => Some(AKEY_W),
-        Keycode::X => Some(AKEY_X),
-        Keycode::Y => Some(AKEY_Y),
-        Keycode::Z => Some(AKEY_Z),
+        Scancode::A => Some(AKEY_A),
+        Scancode::B => Some(AKEY_B),
+        Scancode::C => Some(AKEY_C),
+        Scancode::D => Some(AKEY_D),
+        Scancode::E => Some(AKEY_E),
+        Scancode::F => Some(AKEY_F),
+        Scancode::G => Some(AKEY_G),
+        Scancode::H => Some(AKEY_H),
+        Scancode::I => Some(AKEY_I),
+        Scancode::J => Some(AKEY_J),
+        Scancode::K => Some(AKEY_K),
+        Scancode::L => Some(AKEY_L),
+        Scancode::M => Some(AKEY_M),
+        Scancode::N => Some(AKEY_N),
+        Scancode::O => Some(AKEY_O),
+        Scancode::P => Some(AKEY_P),
+        Scancode::Q => Some(AKEY_Q),
+        Scancode::R => Some(AKEY_R),
+        Scancode::S => Some(AKEY_S),
+        Scancode::T => Some(AKEY_T),
+        Scancode::U => Some(AKEY_U),
+        Scancode::V => Some(AKEY_V),
+        Scancode::W => Some(AKEY_W),
+        Scancode::X => Some(AKEY_X),
+        Scancode::Y => Some(AKEY_Y),
+        Scancode::Z => Some(AKEY_Z),
 
         // Numbers
-        Keycode::Num0 => Some(AKEY_0),
-        Keycode::Num1 => Some(AKEY_1),
-        Keycode::Num2 => Some(AKEY_2),
-        Keycode::Num3 => Some(AKEY_3),
-        Keycode::Num4 => Some(AKEY_4),
-        Keycode::Num5 => Some(AKEY_5),
-        Keycode::Num6 => Some(AKEY_6),
-        Keycode::Num7 => Some(AKEY_7),
-        Keycode::Num8 => Some(AKEY_8),
-        Keycode::Num9 => Some(AKEY_9),
+        Scancode::Num0 => Some(AKEY_0),
+        Scancode::Num1 => Some(AKEY_1),
+        Scancode::Num2 => Some(AKEY_2),
+        Scancode::Num3 => Some(AKEY_3),
+        Scancode::Num4 => Some(AKEY_4),
+        Scancode::Num5 => Some(AKEY_5),
+        Scancode::Num6 => Some(AKEY_6),
+        Scancode::Num7 => Some(AKEY_7),
+        Scancode::Num8 => Some(AKEY_8),
+        Scancode::Num9 => Some(AKEY_9),
+
+        // Punctuation / symbols
+        Scancode::Semicolon => Some(AKEY_SEMICOLON),
+        Scancode::Comma => Some(AKEY_COMMA),
+        Scancode::Period => Some(AKEY_PERIOD),
+        Scancode::Slash => Some(AKEY_SLASH),
+        Scancode::Minus => Some(AKEY_MINUS),
+        Scancode::Equals => Some(AKEY_EQUALS),
+        Scancode::CapsLock => Some(AKEY_CAPS),
 
         // Special keys
-        Keycode::Space => Some(AKEY_SPACE),
-        Keycode::Return => Some(AKEY_RETURN),
-        Keycode::Escape => Some(AKEY_ESCAPE),
-        Keycode::Backspace => Some(AKEY_BACKSPACE),
-        Keycode::Tab => Some(AKEY_TAB),
+        Scancode::Space => Some(AKEY_SPACE),
+        Scancode::Return => Some(AKEY_RETURN),
+        Scancode::Escape => Some(AKEY_ESCAPE),
+        Scancode::Backspace => Some(AKEY_BACKSPACE),
+        Scancode::Tab => Some(AKEY_TAB),
 
-        // Unmapped keys
         _ => None,
     }
 }

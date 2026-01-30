@@ -5,7 +5,7 @@ use std::env;
 use std::time::{Duration, Instant};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::Scancode;
 
 fn print_help() {
     println!("Atari 800 Emulator");
@@ -144,14 +144,14 @@ fn run_with_sdl(speed_limit: bool) {
             match event {
                 Event::Quit { .. } => break 'running,
 
-                Event::KeyDown { keycode: Some(keycode), repeat: false, .. } => {
+                Event::KeyDown { scancode: Some(scancode), repeat: false, .. } => {
                     // Check for ESC to quit
-                    if keycode == Keycode::Escape {
+                    if scancode == Scancode::Escape {
                         break 'running;
                     }
 
-                    // Convert SDL keycode to Atari key code
-                    if let Some(atari_key) = input::sdl_to_atari(keycode) {
+                    // Convert SDL scancode to Atari base key code
+                    if let Some(atari_key) = input::scancode_to_atari(scancode) {
                         // Send key press to emulator with current modifier state
                         atari800.handle_key_press(atari_key, shift, ctrl);
                     }
@@ -251,7 +251,7 @@ fn run_animated_test() {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
+                    scancode: Some(Scancode::Escape),
                     ..
                 } => break 'running,
                 _ => {}
