@@ -20,6 +20,7 @@ fn print_help() {
     println!("    -d, --debug             Run in debugger mode");
     println!("    -a, --animate           Run animated test pattern");
     println!("    -f, --fullspeed         Run at maximum speed (no speed limiting)");
+    println!("    --cart1 <file>          Load cartridge ROM (8KB or 16KB, raw or .car)");
     println!();
     println!("SPEED LIMITING:");
     println!("    By default, the emulator runs at authentic Atari 800 speed:");
@@ -54,6 +55,11 @@ fn main() {
     // Speed limiting flag (default: enabled, disable with --fullspeed)
     let full_speed = args.iter().any(|arg| arg == "--fullspeed" || arg == "-f");
     let speed_limit = !full_speed && !run_functional_test;  // Disable for test mode too
+
+    // Cartridge file
+    let cart1_path = args.windows(2)
+        .find(|w| w[0] == "--cart1")
+        .map(|w| w[1].clone());
 
     if run_functional_test {
         // Run the 6502 functional test suite
@@ -90,11 +96,11 @@ fn main() {
         run_animated_test();
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(speed_limit);
+        run_with_sdl(speed_limit, cart1_path.as_deref());
     }
 }
 
-fn run_with_sdl(speed_limit: bool) {
+fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>) {
 
     // Initialize SDL2
     let sdl_context = sdl2::init().unwrap();
@@ -116,7 +122,7 @@ fn run_with_sdl(speed_limit: bool) {
         .unwrap();
 
     // Create Atari800 instance
-    let mut atari800 = Atari800::new();
+    let mut atari800 = Atari800::with_cart(cart_path);
 
     // Enable brief tracing after 5 seconds to see where we are
     let mut trace_enabled = false;

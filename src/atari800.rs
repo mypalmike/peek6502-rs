@@ -30,13 +30,44 @@ pub struct Atari800 {
 
     // IRQ line (6502 hardware interrupt line, shared by POKEY, PIA, PBI)
     irq_line: bool,
+
+    // Cartridge ROM (mapped at $A000-$BFFF for 8KB, $8000-$BFFF for 16KB)
+    cart_rom: Option<Vec<u8>>,
+    cart_base: u16,
 }
 
 impl Atari800 {
     pub fn new() -> Atari800 {
+        Atari800::with_cart(None)
+    }
+
+    pub fn with_cart(cart_path: Option<&str>) -> Atari800 {
+        let (cart_rom, cart_base) = match cart_path {
+            Some(path) => {
+                let data = std::fs::read(path)
+                    .unwrap_or_else(|e| panic!("Failed to load cartridge '{}': {}", path, e));
+
+                // Skip 16-byte CART header if present
+                let rom = if data.len() >= 16 && &data[0..4] == b"CART" {
+                    data[16..].to_vec()
+                } else {
+                    data
+                };
+
+                let base = match rom.len() {
+                    0x2000 => 0xA000u16, // 8KB  -> $A000-$BFFF
+                    0x4000 => 0x8000u16, // 16KB -> $8000-$BFFF
+                    other => panic!("Unsupported cartridge size: {} bytes (expected 8192 or 16384)", other),
+                };
+                println!("Loaded {}KB cartridge from {}", rom.len() / 1024, path);
+                (Some(rom), base)
+            }
+            None => (None, 0xA000),
+        };
+
         let mut atari800 = Atari800 {
             cpu: Cpu::new(),
-            mem: Mem::new(0xD800, false),  // ROM at $D800-$FFFF (10KB OS ROM), load OS ROM
+            mem: Mem::new(0xD800, false),
             antic: Antic::new(),
             gtia: Gtia::new(),
             pokey: Pokey::new(),
@@ -46,6 +77,8 @@ impl Atari800 {
             cpu_halted: false,
             nmi_line: false,
             irq_line: false,
+            cart_rom,
+            cart_base,
         };
 
         // Reset CPU after construction to load PC from reset vector
@@ -376,8 +409,12 @@ impl Bus for Atari800 {
             // Unused I/O space ($D500-$D7FF)
             0xD500..=0xD7FF => 0xFF,
 
-            // Cartridge space ($A000-$BFFF) - no cartridge inserted, return open bus
-            0xA000..=0xBFFF => 0xFF,
+            // Cartridge space
+            0x8000..=0xBFFF if self.cart_rom.is_some() && addr >= self.cart_base => {
+                let rom = self.cart_rom.as_ref().unwrap();
+                rom[(addr - self.cart_base) as usize]
+            }
+            0xA000..=0xBFFF => 0xFF, // No cartridge
 
             // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
             0xC000..=0xCFFF => 0xFF,
@@ -414,7 +451,8 @@ impl Bus for Atari800 {
             // Unused I/O space ($D500-$D7FF) - ignore writes
             0xD500..=0xD7FF => {}
 
-            // Cartridge space ($A000-$BFFF) - no cartridge, ignore writes
+            // Cartridge space - ROM, ignore writes
+            0x8000..=0xBFFF if self.cart_rom.is_some() && addr >= self.cart_base => {}
             0xA000..=0xBFFF => {}
 
             // Unmapped space ($C000-$CFFF) - no RAM here on 48K Atari 800
