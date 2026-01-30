@@ -31,6 +31,10 @@ pub struct Pokey {
     timers: [u16; 4],   // Internal timer counters
     random_seed: u8,    // For random number generation
 
+    // Serial output state
+    serial_out_timer: u16,    // Countdown for serial output completion
+    serial_out_active: bool,  // Whether serial output is in progress
+
     // Keyboard state
     last_key_code: u8,  // Last key code pressed (for change detection)
     shift_pressed: bool, // Track shift key state
@@ -58,6 +62,8 @@ impl Pokey {
             skstat: 0xFF,  // All status bits high = keyboard ready, no errors
             timers: [0; 4],
             random_seed: 0xFF,
+            serial_out_timer: 0,
+            serial_out_active: false,
             last_key_code: 0xFF, // No key pressed initially
             shift_pressed: false,
             ctrl_pressed: false,
@@ -73,7 +79,32 @@ impl Pokey {
             } else {
                 // Timer expired, reload from frequency register
                 self.timers[i] = self.audf[i] as u16;
-                // TODO: Generate audio sample, trigger IRQ if enabled
+                // Timer underflow IRQ: timer 0→bit 0, timer 1→bit 1, timer 3→bit 2
+                let irq_bit = match i {
+                    0 => Some(0),
+                    1 => Some(1),
+                    3 => Some(2),
+                    _ => None,
+                };
+                if let Some(bit) = irq_bit {
+                    let mask = 1 << bit;
+                    if (self.irqen & mask) != 0 {
+                        self.irqst &= !mask;
+                    }
+                }
+            }
+        }
+
+        // Serial output timer
+        if self.serial_out_active {
+            if self.serial_out_timer > 0 {
+                self.serial_out_timer -= 1;
+            } else {
+                self.serial_out_active = false;
+                // Serial output transmission complete - clear IRQST bit 3
+                if (self.irqen & 0x08) != 0 {
+                    self.irqst &= !0x08;
+                }
             }
         }
 
@@ -126,7 +157,15 @@ impl Pokey {
             }
             0x0A => self.skrest = val,
             0x0B => self.potgo = val,
-            0x0D => self.serout = val,
+            0x0D => {
+                self.serout = val;
+                // Immediate: clear "output data needed" IRQ (bit 4)
+                if (self.irqen & 0x10) != 0 {
+                    self.irqst &= !0x10;
+                }
+                self.serial_out_active = true;
+                self.serial_out_timer = 1000; // ~19200 baud approximation
+            }
             0x0E => self.irqen = val,
             0x0F => self.skctl = val,
             _ => {}

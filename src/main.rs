@@ -143,7 +143,7 @@ fn run_with_sdl(speed_limit: bool) {
             match event {
                 Event::Quit { .. } => break 'running,
 
-                Event::KeyDown { keycode: Some(keycode), .. } => {
+                Event::KeyDown { keycode: Some(keycode), repeat: false, .. } => {
                     // Check for ESC to quit
                     if keycode == Keycode::Escape {
                         break 'running;
@@ -157,8 +157,7 @@ fn run_with_sdl(speed_limit: bool) {
                 }
 
                 Event::KeyUp { .. } => {
-                    // Don't clear KBCODE on key release - let it stay until next key press
-                    // This matches Atari hardware behavior
+                    atari800.handle_key_release();
                 }
 
                 _ => {}

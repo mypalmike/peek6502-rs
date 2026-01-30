@@ -96,6 +96,12 @@ impl Atari800 {
         // Restore CPU
         self.cpu = cpu;
 
+        // Tick POKEY for each CPU cycle (timers, serial I/O)
+        for _ in 0..cycles {
+            self.pokey.tick();
+        }
+        self.irq_line = self.pokey.irq_active();
+
         // Update ANTIC video timing based on cycles executed
         // ANTIC manages its own scanline advancement and signals frame completion
         self.antic.tick_cycles(cycles)
