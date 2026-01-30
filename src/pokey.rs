@@ -175,9 +175,8 @@ impl Pokey {
     /// Handle a key press event
     /// Returns true if IRQ line should be asserted
     pub fn key_press(&mut self, atari_key_code: u8, shift: bool, ctrl: bool) -> bool {
-        // Only trigger interrupt on actual key code change
-        // (ignore if only shift/ctrl modifiers changed)
-        let key_code_changed = (atari_key_code & 0x3F) != (self.last_key_code & 0x3F);
+        // Trigger interrupt on key code change
+        let key_code_changed = atari_key_code != self.last_key_code;
 
         if key_code_changed {
             self.last_key_code = atari_key_code;

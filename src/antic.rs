@@ -300,17 +300,14 @@ impl Antic {
         let instruction = mem.get_byte(self.dlist_index);
         self.dlist_index += 1;
 
-        // Check for LMS (Load Memory Scan) bit (bit 6)
-        let has_lms = (instruction & 0x40) != 0;
+        // Extract mode (bits 0-3)
+        let mode = instruction & 0x0F;
 
         // Check for DLI (Display List Interrupt) bit (bit 7)
         let _has_dli = (instruction & 0x80) != 0;
 
-        // Extract mode (bits 0-3)
-        let mode = instruction & 0x0F;
-
         // Check for JVB (Jump with Vertical Blank) instruction
-        if (instruction & 0x0F) == 0x01 {
+        if mode == 0x01 {
             // JVB - jump to new display list address
             let new_addr_lo = mem.get_byte(self.dlist_index);
             let new_addr_hi = mem.get_byte(self.dlist_index + 1);
@@ -323,6 +320,10 @@ impl Antic {
 
         self.current_mode = mode;
         self.mode_line = 0;
+
+        // LMS (Load Memory Scan) bit (bit 6) - only valid for non-blank modes
+        // Blank lines (mode 0) use bits 6-4 for scan line count, not LMS
+        let has_lms = mode != 0x00 && (instruction & 0x40) != 0;
 
         // If LMS bit is set, read screen memory address
         if has_lms {
@@ -375,8 +376,8 @@ impl Antic {
                 let pixel_on = (char_data & (1 << (7 - bit))) != 0;
                 let pixel_x = (char_col * 8 + bit) as usize;
 
-                // Color index: 0 = background, 1 = foreground
-                self.scanline_buffer[pixel_x] = if pixel_on { 1 } else { 0 };
+                // Mode 2: background = COLPF2 (index 3), foreground = COLPF1 (index 2)
+                self.scanline_buffer[pixel_x] = if pixel_on { 2 } else { 3 };
             }
         }
 

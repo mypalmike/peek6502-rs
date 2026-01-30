@@ -266,12 +266,18 @@ impl Atari800 {
         // Reset ANTIC display list state for new frame (simulates vertical blank)
         self.antic.start_frame();
 
-        // Process each scanline through ANTIC and GTIA
-        for scanline in 0..192 {
-            // ANTIC generates color indices from display list
+        // Process scanlines through ANTIC and GTIA
+        // NTSC visible area: 240 scanlines of display list processing,
+        // but only 192 scanlines rendered to framebuffer.
+        // The first 8 scanlines are top blank (VBLANK end), then 24 blank from
+        // the display list's $70 instructions, then 192 visible lines, then bottom blank.
+        // We process 24 blank scanlines first (display list overhead), then render 192.
+        let blank_lines = 24;
+        for _ in 0..blank_lines {
             self.antic.process_scanline(&self.mem);
-
-            // GTIA colorizes and writes to framebuffer
+        }
+        for scanline in 0..192 {
+            self.antic.process_scanline(&self.mem);
             self.gtia.render_scanline(scanline, &self.antic.scanline_buffer);
         }
     }
