@@ -679,7 +679,12 @@ impl Cpu {
 
     // 0x03, time 8, unofficial
     fn op_slo_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_izx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x04, time 3, unofficial
@@ -701,7 +706,12 @@ impl Cpu {
 
     // 0x07, time 5, unofficial
     fn op_slo_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x08, time 3
@@ -723,13 +733,17 @@ impl Cpu {
     }
 
     // 0x0b, time 2, unofficial
+    // ANC: AND immediate, then copy N flag to C
     fn op_anc_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_anc_imm is not implemented");
+        let val = self.fetch_byte(bus);
+        self.a &= val;
+        self.compute_nz();
+        self.c = self.n;
     }
 
     // 0x0c, time 4, unofficial
     fn op_nop_abs(&mut self, bus: &mut dyn Bus) {
-        self.pc += 3;
+        self.pc += 2;
     }
 
     // 0x0d, time 4
@@ -746,7 +760,12 @@ impl Cpu {
 
     // 0x0f, time 6, unofficial
     fn op_slo_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_nop_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x10, time 2+
@@ -780,7 +799,12 @@ impl Cpu {
 
     // 0x13, time 8, unofficial
     fn op_slo_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x14, time 4, unofficial
@@ -802,7 +826,12 @@ impl Cpu {
 
     // 0x17, time 6
     fn op_slo_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_zpx is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x18, time 2
@@ -826,7 +855,12 @@ impl Cpu {
 
     // 0x1b, time 7, unofficial
     fn op_slo_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x1c, time 4+, unofficial
@@ -857,7 +891,12 @@ impl Cpu {
 
     // 0x1f, time 7, unofficial
     fn op_slo_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_slo_abx is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr);
+        let new_val = self.asl_val(bus, val);
+        bus.write(addr, new_val);
+        self.a |= new_val;
+        self.compute_nz();
     }
 
     // 0x20, time 6
@@ -877,7 +916,12 @@ impl Cpu {
 
     // 0x23, time 7, unofficial
     fn op_rla_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rla_izx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x24, time 3
@@ -900,7 +944,12 @@ impl Cpu {
 
     // 0x27, time 5, unofficial
     fn op_rla_zp(&mut self, bus: &mut dyn Bus) {
-         panic!("op_rla_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x28, time 4
@@ -944,7 +993,12 @@ impl Cpu {
 
     // 0x2f, time 6, unofficial
     fn op_rla_abs(&mut self, bus: &mut dyn Bus) {
-         panic!("op_rla_zp is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x30, time 2+
@@ -978,7 +1032,12 @@ impl Cpu {
 
     // 0x33, time 8
     fn op_rla_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rla_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x34 nop_zpx
@@ -997,7 +1056,12 @@ impl Cpu {
 
     // 0x37, time 6, unofficial
     fn op_rla_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rla_zpx is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x38, time 2
@@ -1019,7 +1083,12 @@ impl Cpu {
 
     // 0x3b, time 7, unofficial
     fn op_rla_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rla_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x3c nop_abx
@@ -1043,7 +1112,12 @@ impl Cpu {
 
     // 0x3f, time 7, unofficial
     fn op_rla_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rla_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr);
+        let new_val = self.rol_val(bus, val);
+        bus.write(addr, new_val);
+        self.a &= new_val;
+        self.compute_nz();
     }
 
     // 0x40, time 6
@@ -1064,7 +1138,12 @@ impl Cpu {
 
     // 0x43, time 8, unofficial
     fn op_sre_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_izx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x44 op_nop_zp
@@ -1083,7 +1162,12 @@ impl Cpu {
 
     // 0x47, time 5
     fn op_sre_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x48, time 3
@@ -1106,7 +1190,10 @@ impl Cpu {
 
     // 0x4b, time 2
     fn op_alr_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_alr_imm is not implemented");
+        // ALR: AND immediate, then LSR accumulator
+        let val = self.fetch_byte(bus);
+        self.a &= val;
+        self.a = self.lsr_val(bus, self.a);
     }
 
     // 0x4c, time 3
@@ -1129,7 +1216,12 @@ impl Cpu {
 
     // 0x4f, time 6, unofficial
     fn op_sre_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_jmp_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x50, time 2+
@@ -1163,7 +1255,12 @@ impl Cpu {
 
     // 0x53, time 8, unofficial
     fn op_sre_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x54 nop_zpx
@@ -1182,7 +1279,12 @@ impl Cpu {
 
     // 0x57, time 6, unofficial
     fn op_sre_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_zpx is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x58, time 2
@@ -1204,7 +1306,12 @@ impl Cpu {
 
     // 0x5b, time 7, unofficial
     fn op_sre_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x5c nop_abx
@@ -1228,7 +1335,12 @@ impl Cpu {
 
     // 0x5f, time 7, unofficial
     fn op_sre_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sre_abx is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr);
+        let new_val = self.lsr_val(bus, val);
+        bus.write(addr, new_val);
+        self.a ^= new_val;
+        self.compute_nz();
     }
 
     // 0x60, time 6
@@ -1247,7 +1359,11 @@ impl Cpu {
 
     // 0x63, time 8, unofficial
     fn op_rra_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_izx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x64 nop_zp
@@ -1266,7 +1382,11 @@ impl Cpu {
 
     // 0x67, time 5
     fn op_rra_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x68, time 4
@@ -1292,7 +1412,15 @@ impl Cpu {
 
     // 0x6b, time 2, unofficial
     fn op_arr_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_arr_imm is not implemented");
+        // ARR: AND immediate, then ROR accumulator, with special flag handling
+        let val = self.fetch_byte(bus);
+        self.a &= val;
+        self.a = self.ror_val(bus, self.a);
+        // Special C and V flag behavior based on bits 5 and 6 of result
+        let b5 = (self.a >> 5) & 1;
+        let b6 = (self.a >> 6) & 1;
+        self.c = b6 == 1;
+        self.v = (b5 ^ b6) == 1;
     }
 
     // 0x6c, time 5
@@ -1315,7 +1443,11 @@ impl Cpu {
 
     // 0x6f, time 6
     fn op_rra_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x70, time 2+
@@ -1349,7 +1481,11 @@ impl Cpu {
 
     // 0x73, time 8, unofficial
     fn op_rra_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x74 nop_zpx
@@ -1368,7 +1504,11 @@ impl Cpu {
 
     // 0x77, time 6, unofficial
     fn op_rra_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_izy is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x78, time 2
@@ -1390,7 +1530,11 @@ impl Cpu {
 
     // 0x7b, time 7
     fn op_rda_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rda_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x7c nop_abx
@@ -1414,7 +1558,11 @@ impl Cpu {
 
     // 0x7f, time 7
     fn op_rra_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_abx is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr);
+        let new_val = self.ror_val(bus, val);
+        bus.write(addr, new_val);
+        self.adc(bus, new_val);
     }
 
     // 0x80 nop_imm
@@ -1432,7 +1580,8 @@ impl Cpu {
 
     // 0x83
     fn op_sax_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_rra_abx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        bus.write(addr, self.a & self.x);
     }
 
     // 0x84, time 3
@@ -1455,7 +1604,8 @@ impl Cpu {
 
     // 0x87, time 3
     fn op_sax_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sax_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        bus.write(addr, self.a & self.x);
     }
 
     // 0x88, time 2
@@ -1474,7 +1624,10 @@ impl Cpu {
 
     // 0x8b, time 2, unofficial
     fn op_xaa_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_xaa_imm is not implemented");
+        // XAA: unstable. Common behavior: A = (A | 0xEE) & X & imm
+        let val = self.fetch_byte(bus);
+        self.a = (self.a | 0xEE) & self.x & val;
+        self.compute_nz();
     }
 
     // 0x8c, time 4
@@ -1497,7 +1650,8 @@ impl Cpu {
 
     // 0x8f, time 4, unofficial
     fn op_sax_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_sax_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        bus.write(addr, self.a & self.x);
     }
 
     // 0x90, time 2+
@@ -1528,7 +1682,10 @@ impl Cpu {
 
     // 0x93, time 6
     fn op_ahx_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_ahx_izy is not implemented");
+        // AHX: store A & X & (high byte of addr + 1) to addr
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let h = ((addr >> 8) as u8).wrapping_add(1);
+        bus.write(addr, self.a & self.x & h);
     }
 
     // 0x94, time 4
@@ -1551,7 +1708,8 @@ impl Cpu {
 
     // 0x97, time 4, unofficial
     fn op_sax_zpy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_ahx_izy is not implemented");
+        let addr = self.fetch_addr_mode_zpy(bus);
+        bus.write(addr, self.a & self.x);
     }
 
     // 0x98, time 2
@@ -1574,12 +1732,19 @@ impl Cpu {
 
     // 0x9b, time 5
     fn op_tas_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_tas_aby is not implemented");
+        // TAS: S = A & X; store S & (high byte of addr + 1) to addr
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        self.s = self.a & self.x;
+        let h = ((addr >> 8) as u8).wrapping_add(1);
+        bus.write(addr, self.s & h);
     }
 
     // 0x9c, time 5
     fn op_shy_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_shy_abx is not implemented");
+        // SHY: store Y & (high byte of addr + 1) to addr
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let h = ((addr >> 8) as u8).wrapping_add(1);
+        bus.write(addr, self.y & h);
     }
 
     // 0x9d, time 5
@@ -1591,12 +1756,18 @@ impl Cpu {
 
     // 0x9e, time 5
     fn op_shx_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_shx_aby is not implemented");
+        // SHX: store X & (high byte of addr + 1) to addr
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let h = ((addr >> 8) as u8).wrapping_add(1);
+        bus.write(addr, self.x & h);
     }
 
     // 0x9f, time 5
     fn op_ahx_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_ahx_aby is not implemented");
+        // AHX: store A & X & (high byte of addr + 1) to addr
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let h = ((addr >> 8) as u8).wrapping_add(1);
+        bus.write(addr, self.a & self.x & h);
     }
 
     // 0xa0, time 2
@@ -1619,7 +1790,10 @@ impl Cpu {
 
     // 0xa3, time 6, unofficial
     fn op_lax_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_izx is not implemented");
+        let val = self.fetch_val_mode_izx(bus);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xa4, time 3
@@ -1642,7 +1816,10 @@ impl Cpu {
 
     // 0xa7, time 3
     fn op_lax_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_zp is not implemented");
+        let val = self.fetch_val_mode_zp(bus);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xa8, time 2
@@ -1664,8 +1841,12 @@ impl Cpu {
     }
 
     // 0xab, time 2, unofficial
+    // LAX immediate is unstable; common behavior: A = X = (A | 0xEE) & imm
     fn op_lax_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_imm is not implemented");
+        let val = self.fetch_byte(bus);
+        self.a = (self.a | 0xEE) & val;
+        self.x = self.a;
+        self.compute_nz();
     }
 
     // 0xac, time 4
@@ -1688,7 +1869,10 @@ impl Cpu {
 
     // 0xaf, time 4
     fn op_lax_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_imm is not implemented");
+        let val = self.fetch_val_mode_abs(bus);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xb0, time 2+
@@ -1722,7 +1906,14 @@ impl Cpu {
 
     // 0xb3, time 5+, unofficial
     fn op_lax_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_imm is not implemented");
+        let (addr, page_crossed) = self.fetch_addr_mode_izy(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xb4, time 4
@@ -1745,7 +1936,10 @@ impl Cpu {
 
     // 0xb7, time 4
     fn op_lax_zpy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_imm is not implemented");
+        let val = self.fetch_val_mode_zpy(bus);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xb8, time 2
@@ -1771,7 +1965,17 @@ impl Cpu {
 
     // 0xbb, time 4+, unofficial
     fn op_las_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_las_aby is not implemented");
+        // LAS: A = X = S = mem & S
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
+        let result = val & self.s;
+        self.a = result;
+        self.x = result;
+        self.s = result;
+        self.compute_nz();
     }
 
     // 0xbc, time 4+
@@ -1806,7 +2010,14 @@ impl Cpu {
 
     // 0xbf, time 4+, unofficial
     fn op_lax_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_aby is not implemented");
+        let (addr, page_crossed) = self.fetch_addr_mode_aby(bus);
+        if page_crossed {
+            self.cycles_remaining += 1;
+        }
+        let val = bus.read(addr);
+        self.a = val;
+        self.x = val;
+        self.compute_nz();
     }
 
     // 0xc0, time 2
@@ -1825,7 +2036,10 @@ impl Cpu {
 
     // 0xc3, time 8, unofficial
     fn op_dcp_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_lax_aby is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xc4, time 3
@@ -1848,7 +2062,10 @@ impl Cpu {
 
     // 0xc7, time 5, unofficial
     fn op_dcp_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xc8, time 2
@@ -1870,8 +2087,14 @@ impl Cpu {
     }
 
     // 0xcb, time 2, unofficial
+    // AXS/SBX: X = (A & X) - imm, set flags like CMP
     fn op_axs_imm(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_zp is not implemented");
+        let val = self.fetch_byte(bus);
+        let ax = self.a & self.x;
+        let (result, overflow) = ax.overflowing_sub(val);
+        self.x = result;
+        self.c = !overflow;
+        self.compute_nz_val(result);
     }
 
     // 0xcc, time 4
@@ -1894,7 +2117,10 @@ impl Cpu {
 
     // 0xcf, time 6
     fn op_dcp_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xd0, time 2+
@@ -1928,7 +2154,10 @@ impl Cpu {
 
     // 0xd3, time 8
     fn op_dcp_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xd4 nop_zpx
@@ -1947,7 +2176,10 @@ impl Cpu {
 
     // 0xd7, time 6
     fn op_dcp_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_izy is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xd8, time 2
@@ -1969,7 +2201,10 @@ impl Cpu {
 
     // 0xdb, time 7
     fn op_dcp_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xdc nop_abx
@@ -1993,7 +2228,10 @@ impl Cpu {
 
     // 0xdf, time 7
     fn op_dcp_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_dcp_abx is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr).wrapping_sub(1);
+        bus.write(addr, val);
+        self.cmp(bus, self.a, val);
     }
 
     // 0xe0, time 2
@@ -2012,7 +2250,10 @@ impl Cpu {
 
     // 0xe3, time 8
     fn op_isc_izx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_izx is not implemented");
+        let addr = self.fetch_addr_mode_izx(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xe4, time 3
@@ -2035,7 +2276,10 @@ impl Cpu {
 
     // 0xe7, time 5
     fn op_isc_zp(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_zp is not implemented");
+        let addr = self.fetch_addr_mode_zp(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xe8, time 2
@@ -2074,7 +2318,10 @@ impl Cpu {
 
     // 0xef, time 6
     fn op_isc_abs(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_abs is not implemented");
+        let addr = self.fetch_addr_mode_abs(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xf0, time 2+
@@ -2108,7 +2355,10 @@ impl Cpu {
 
     // 0xf3, time 8
     fn op_isc_izy(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_izy is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_izy(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xf4 nop_zpx
@@ -2127,7 +2377,10 @@ impl Cpu {
 
     // 0xf7, time 6
     fn op_isc_zpx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_izy is not implemented");
+        let addr = self.fetch_addr_mode_zpx(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xf8, time 2
@@ -2149,7 +2402,10 @@ impl Cpu {
 
     // 0xfb, time 7
     fn op_isc_aby(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_aby is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_aby(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // 0xfc nop_abx
@@ -2173,7 +2429,10 @@ impl Cpu {
 
     // 0xff, time 7
     fn op_isc_abx(&mut self, bus: &mut dyn Bus) {
-        panic!("op_isc_abx is not implemented");
+        let (addr, _page_crossed) = self.fetch_addr_mode_abx(bus);
+        let val = bus.read(addr).wrapping_add(1);
+        bus.write(addr, val);
+        self.sbc(bus, val);
     }
 
     // Implementations of core functionality once the address has been
