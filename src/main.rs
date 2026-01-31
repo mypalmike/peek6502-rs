@@ -21,6 +21,18 @@ fn print_help() {
     println!("    -a, --animate           Run animated test pattern");
     println!("    -f, --fullspeed         Run at maximum speed (no speed limiting)");
     println!("    --cart1 <file>          Load cartridge ROM (8KB or 16KB, raw or .car)");
+    println!("    --keyboard <mode>       Keyboard mapping mode: physical|modern (default: modern)");
+    println!();
+    println!("KEYBOARD MODES:");
+    println!("    --keyboard=modern (default)");
+    println!("        Maps by character intent - typing produces expected characters.");
+    println!("        Examples: Shift+2 = @, Shift+7 = &, apostrophe = '");
+    println!("        Arrow keys map to Ctrl+cursor movement.");
+    println!();
+    println!("    --keyboard=physical");
+    println!("        Maps by physical key position - host keys map to Atari key positions.");
+    println!("        Use if you have an Atari-layout keyboard or want physical mapping.");
+    println!("        CapsLock acts as Ctrl in this mode.");
     println!();
     println!("SPEED LIMITING:");
     println!("    By default, the emulator runs at authentic Atari 800 speed:");
@@ -30,11 +42,13 @@ fn print_help() {
     println!("    The --test mode always runs at full speed for faster testing.");
     println!();
     println!("EXAMPLES:");
-    println!("    atari800-rs                     # Run at real-time 1.79 MHz (default)");
-    println!("    atari800-rs --fullspeed         # Run at maximum speed");
-    println!("    atari800-rs -f                  # Same as --fullspeed");
-    println!("    atari800-rs --test              # Run functional tests (full speed)");
-    println!("    atari800-rs --animate           # Run animation demo");
+    println!("    atari800-rs                            # Run at real-time 1.79 MHz (default)");
+    println!("    atari800-rs --fullspeed                # Run at maximum speed");
+    println!("    atari800-rs -f                         # Same as --fullspeed");
+    println!("    atari800-rs --keyboard=physical        # Use physical key mapping");
+    println!("    atari800-rs --cart1 basic.rom          # Load BASIC cartridge");
+    println!("    atari800-rs --test                     # Run functional tests (full speed)");
+    println!("    atari800-rs --animate                  # Run animation demo");
 }
 
 fn main() {
@@ -60,6 +74,12 @@ fn main() {
     let cart1_path = args.windows(2)
         .find(|w| w[0] == "--cart1")
         .map(|w| w[1].clone());
+
+    // Keyboard mapping mode (default: modern)
+    let keyboard_mode = args.windows(2)
+        .find(|w| w[0] == "--keyboard")
+        .map(|w| w[1].as_str())
+        .unwrap_or("modern");
 
     if run_functional_test {
         // Run the 6502 functional test suite
@@ -96,11 +116,20 @@ fn main() {
         run_animated_test();
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(speed_limit, cart1_path.as_deref());
+        run_with_sdl(speed_limit, cart1_path.as_deref(), keyboard_mode);
     }
 }
 
-fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>) {
+fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str) {
+    // Create keyboard mapper based on mode
+    let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
+        "physical" => Box::new(input::PhysicalMapper),
+        "modern" => Box::new(input::ModernMapper),
+        _ => {
+            eprintln!("Invalid keyboard mode '{}', using 'modern'", keyboard_mode);
+            Box::new(input::ModernMapper)
+        }
+    };
 
     // Initialize SDL2
     let sdl_context = sdl2::init().unwrap();
@@ -153,17 +182,19 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>) {
                 Event::Quit { .. } => break 'running,
 
                 Event::KeyDown { scancode: Some(scancode), repeat: false, .. } => {
-                    // Host Option+number: Atari console buttons
+                    // Host Option+key: special functions
                     if host_alt {
                         match scancode {
                             Scancode::Num1 => atari800.console_press(2), // OPTION
                             Scancode::Num2 => atari800.console_press(1), // SELECT
                             Scancode::Num3 => atari800.console_press(0), // START
                             Scancode::Space => atari800.handle_key_press(input::AKEY_ATARI, shift, ctrl), // Inverse video
+                            Scancode::Backspace => atari800.handle_break_key(), // Break key
+                            Scancode::Tab => atari800.handle_key_press(input::AKEY_CAPS, false, false), // Caps Lock
                             _ => {}
                         }
-                    } else if let Some(atari_key) = input::scancode_to_atari(scancode) {
-                        atari800.handle_key_press(atari_key, shift, ctrl);
+                    } else if let Some(event) = mapper.map_key(scancode, shift, ctrl) {
+                        atari800.handle_key_press(event.key_code, event.shift, event.ctrl);
                     }
                 }
 

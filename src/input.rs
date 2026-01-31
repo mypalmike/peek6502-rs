@@ -3,6 +3,10 @@
 /// Uses SDL scancodes (physical key position) rather than keycodes so that
 /// modifier keys don't change which base key is detected. POKEY adds the
 /// SHIFT (bit 6) and CTRL (bit 7) modifier bits to the base key code.
+///
+/// Two keyboard mapping modes are supported:
+/// - Physical: Maps keys by physical position (host key position -> Atari key position)
+/// - Modern: Maps keys by character intent (host character -> Atari character)
 
 use sdl2::keyboard::Scancode;
 
@@ -74,6 +78,20 @@ pub const AKEY_ATARI: u8 = 0x27;  // Inverse video key
 // No key pressed
 pub const AKEY_NONE: u8 = 0xFF;
 
+/// Represents an Atari key event with key code and modifier state
+#[derive(Debug, Clone, Copy)]
+pub struct AtariKeyEvent {
+    pub key_code: u8,
+    pub shift: bool,
+    pub ctrl: bool,
+}
+
+/// Trait for keyboard mapping strategies
+pub trait KeyboardMapper {
+    /// Map a host scancode with modifiers to an Atari key event
+    fn map_key(&self, scancode: Scancode, host_shift: bool, host_ctrl: bool) -> Option<AtariKeyEvent>;
+}
+
 /// Convert SDL scancode to Atari base key code (bits 0-5 only).
 /// Modifier bits (SHIFT/CTRL) are added by POKEY based on modifier key state.
 /// Returns None if the scancode has no Atari mapping.
@@ -136,5 +154,153 @@ pub fn scancode_to_atari(scancode: Scancode) -> Option<u8> {
         Scancode::Tab => Some(AKEY_TAB),
 
         _ => None,
+    }
+}
+
+/// Physical keyboard mapper - maps by physical key position
+/// Host keyboard layout -> Atari 800 physical key positions
+pub struct PhysicalMapper;
+
+impl KeyboardMapper for PhysicalMapper {
+    fn map_key(&self, scancode: Scancode, host_shift: bool, host_ctrl: bool) -> Option<AtariKeyEvent> {
+        // CapsLock becomes Ctrl modifier
+        let ctrl = host_ctrl || scancode == Scancode::CapsLock;
+
+        // Physical position remappings (Atari keyboard layout differs from modern)
+        let (key_code, shift) = match scancode {
+            // Row 1 remappings (number row)
+            Scancode::Minus => (AKEY_LESSTHAN, host_shift),
+            Scancode::Equals => (AKEY_GREATERTHAN, host_shift),
+
+            // Row 2 remappings (QWERTY row)
+            Scancode::LeftBracket => (AKEY_MINUS, host_shift),
+            Scancode::RightBracket => (AKEY_EQUALS, host_shift),
+
+            // Row 3 remappings (ASDF row)
+            Scancode::Apostrophe => (AKEY_PLUS, host_shift),
+            Scancode::Return => (AKEY_ASTERISK, host_shift),
+            Scancode::Backslash => (AKEY_RETURN, host_shift),
+
+            // Everything else maps 1:1 via scancode_to_atari
+            _ => {
+                if let Some(key) = scancode_to_atari(scancode) {
+                    (key, host_shift)
+                } else {
+                    return None;
+                }
+            }
+        };
+
+        Some(AtariKeyEvent { key_code, shift, ctrl })
+    }
+}
+
+/// Modern keyboard mapper - maps by character intent
+/// Host characters -> Atari characters (what you type is what you get)
+pub struct ModernMapper;
+
+impl KeyboardMapper for ModernMapper {
+    fn map_key(&self, scancode: Scancode, host_shift: bool, host_ctrl: bool) -> Option<AtariKeyEvent> {
+        // Ctrl key combinations - only allow specific keys
+        if host_ctrl {
+            let ctrl_allowed = matches!(scancode,
+                // Alphabet
+                Scancode::A | Scancode::B | Scancode::C | Scancode::D |
+                Scancode::E | Scancode::F | Scancode::G | Scancode::H |
+                Scancode::I | Scancode::J | Scancode::K | Scancode::L |
+                Scancode::M | Scancode::N | Scancode::O | Scancode::P |
+                Scancode::Q | Scancode::R | Scancode::S | Scancode::T |
+                Scancode::U | Scancode::V | Scancode::W | Scancode::X |
+                Scancode::Y | Scancode::Z |
+                // Other allowed ctrl combinations
+                Scancode::Comma | Scancode::Period | Scancode::Tab |
+                Scancode::Semicolon | Scancode::Num2 |
+                Scancode::LeftBracket | Scancode::RightBracket
+            );
+            if !ctrl_allowed {
+                // Ignore this ctrl combination
+                return None;
+            }
+        }
+
+        // Special navigation keys
+        let special_nav = match scancode {
+            // Arrow keys -> Ctrl+cursor keys
+            Scancode::Up => Some((AKEY_MINUS, false, true)),
+            Scancode::Down => Some((AKEY_EQUALS, false, true)),
+            Scancode::Left => Some((AKEY_PLUS, false, true)),
+            Scancode::Right => Some((AKEY_ASTERISK, false, true)),
+
+            // Modern keyboard extras
+            Scancode::Delete => Some((AKEY_BACKSPACE, true, false)),  // Delete = Atari Shift+Backspace
+
+            _ => None,
+        };
+        if let Some((key, shift, ctrl)) = special_nav {
+            return Some(AtariKeyEvent { key_code: key, shift, ctrl });
+        }
+
+        // Bracket key handling (only with modifiers)
+        match scancode {
+            Scancode::LeftBracket if host_shift => {
+                return Some(AtariKeyEvent { key_code: AKEY_LESSTHAN, shift: true, ctrl: false }); // Clear
+            }
+            Scancode::RightBracket if host_shift => {
+                return Some(AtariKeyEvent { key_code: AKEY_GREATERTHAN, shift: true, ctrl: false }); // Insert
+            }
+            Scancode::LeftBracket if host_ctrl => {
+                return Some(AtariKeyEvent { key_code: AKEY_LESSTHAN, shift: false, ctrl: true }); // Ctrl+<
+            }
+            Scancode::RightBracket if host_ctrl => {
+                return Some(AtariKeyEvent { key_code: AKEY_GREATERTHAN, shift: false, ctrl: true }); // Ctrl+>
+            }
+            Scancode::LeftBracket | Scancode::RightBracket => {
+                return None; // Unmodified [ and ] do nothing
+            }
+            _ => {}
+        }
+
+        // Handle shifted keys (where modern and Atari differ)
+        if host_shift {
+            let shifted_mapping = match scancode {
+                // Shifted number row
+                Scancode::Num2 => Some((AKEY_8, true, false)),      // @ = Atari Shift+8
+                Scancode::Num6 => Some((AKEY_ASTERISK, true, false)), // ^ = Atari Shift+*
+                Scancode::Num7 => Some((AKEY_6, true, false)),      // & = Atari Shift+6
+                Scancode::Num8 => Some((AKEY_ASTERISK, false, false)), // * = Atari * key (no shift)
+
+                // Shifted punctuation
+                Scancode::Equals => Some((AKEY_PLUS, false, false)),     // + = Atari + key (no shift)
+                Scancode::Backslash => Some((AKEY_EQUALS, true, false)), // | = Atari Shift+=
+                Scancode::Comma => Some((AKEY_LESSTHAN, false, false)),  // < = Atari < key (no shift)
+                Scancode::Period => Some((AKEY_GREATERTHAN, false, false)), // > = Atari > key (no shift)
+                Scancode::Apostrophe => Some((AKEY_2, true, false)),     // " = Atari Shift+2
+
+                _ => None,
+            };
+            if shifted_mapping.is_some() {
+                return shifted_mapping.map(|(key, shift, ctrl)| AtariKeyEvent { key_code: key, shift, ctrl });
+            }
+        }
+
+        // Unshifted special keys
+        match scancode {
+            // Apostrophe -> Shift+7 (on Atari, ' is Shift+7)
+            Scancode::Apostrophe if !host_shift => {
+                return Some(AtariKeyEvent { key_code: AKEY_7, shift: true, ctrl: false });
+            }
+            // Backslash -> Shift++ (on Atari, \ is Shift++)
+            Scancode::Backslash if !host_shift => {
+                return Some(AtariKeyEvent { key_code: AKEY_PLUS, shift: true, ctrl: false });
+            }
+            _ => {}
+        }
+
+        // All other keys: use base mapping, pass modifiers through
+        if let Some(key_code) = scancode_to_atari(scancode) {
+            Some(AtariKeyEvent { key_code, shift: host_shift, ctrl: host_ctrl })
+        } else {
+            None
+        }
     }
 }

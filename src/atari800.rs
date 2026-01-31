@@ -489,6 +489,13 @@ impl Atari800 {
         self.irq_line = self.pokey.key_release();
     }
 
+    /// Handle Break key press (triggers POKEY IRQ bit 7)
+    pub fn handle_break_key(&mut self) {
+        if self.pokey.break_key_press() {
+            self.irq_line = true;
+        }
+    }
+
     /// Press a console button (OPTION/SELECT/START)
     /// bit 0 = START, bit 1 = SELECT, bit 2 = OPTION (active-low: 0 = pressed)
     pub fn console_press(&mut self, bit: u8) {

@@ -269,4 +269,19 @@ impl Pokey {
         self.last_key_code = 0xFF;
         self.irq_active()  // Return current IRQ state
     }
+
+    /// Trigger Break key IRQ (bit 7)
+    /// Returns true if IRQ line should be asserted
+    pub fn break_key_press(&mut self) -> bool {
+        // Update Break key IRQ if enabled (bit 7 of IRQEN)
+        if (self.irqen & 0x80) != 0 {
+            // Check if IRQ is ready (bit 7 of IRQST set)
+            if (self.irqst & 0x80) != 0 {
+                // Clear IRQST bit 7 (Break key IRQ)
+                self.irqst &= !0x80;
+                return true;  // Assert IRQ line
+            }
+        }
+        false  // Don't assert IRQ
+    }
 }
