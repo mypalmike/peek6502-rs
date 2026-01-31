@@ -42,27 +42,53 @@ impl Atari800 {
     }
 
     pub fn with_cart(cart_path: Option<&str>) -> Atari800 {
-        let (cart_rom, cart_base) = match cart_path {
-            Some(path) => {
-                let data = std::fs::read(path)
-                    .unwrap_or_else(|e| panic!("Failed to load cartridge '{}': {}", path, e));
+        let is_xex = cart_path.map_or(false, |p| {
+            let lower = p.to_lowercase();
+            lower.ends_with(".xex") || lower.ends_with(".exe") || lower.ends_with(".com")
+        });
 
-                // Skip 16-byte CART header if present
-                let rom = if data.len() >= 16 && &data[0..4] == b"CART" {
-                    data[16..].to_vec()
-                } else {
-                    data
-                };
+        let (cart_rom, cart_base) = if !is_xex {
+            match cart_path {
+                Some(path) => {
+                    let data = std::fs::read(path)
+                        .unwrap_or_else(|e| panic!("Failed to load cartridge '{}': {}", path, e));
 
-                let base = match rom.len() {
-                    0x2000 => 0xA000u16, // 8KB  -> $A000-$BFFF
-                    0x4000 => 0x8000u16, // 16KB -> $8000-$BFFF
-                    other => panic!("Unsupported cartridge size: {} bytes (expected 8192 or 16384)", other),
-                };
-                println!("Loaded {}KB cartridge from {}", rom.len() / 1024, path);
-                (Some(rom), base)
+                    let (rom, base) = if data.len() >= 16 && &data[0..4] == b"CART" {
+                        // CART format: 4-byte magic, 4-byte type (big-endian), 4-byte checksum, 4 reserved
+                        let cart_type = (data[4] as u32) << 24
+                            | (data[5] as u32) << 16
+                            | (data[6] as u32) << 8
+                            | data[7] as u32;
+                        let rom = data[16..].to_vec();
+                        let base = match cart_type {
+                            1 => { // Standard 8 KB
+                                assert!(rom.len() == 0x2000, "CART type 1 expects 8KB ROM, got {}", rom.len());
+                                0xA000u16
+                            }
+                            2 => { // Standard 16 KB
+                                assert!(rom.len() == 0x4000, "CART type 2 expects 16KB ROM, got {}", rom.len());
+                                0x8000u16
+                            }
+                            _ => panic!("Unsupported CART type {} — only types 1 (8KB) and 2 (16KB) are supported", cart_type),
+                        };
+                        println!("Loaded CART type {} ({}KB) from {}", cart_type, rom.len() / 1024, path);
+                        (rom, base)
+                    } else {
+                        // Raw ROM image — determine mapping from size
+                        let base = match data.len() {
+                            0x2000 => 0xA000u16, // 8KB  -> $A000-$BFFF
+                            0x4000 => 0x8000u16, // 16KB -> $8000-$BFFF
+                            other => panic!("Unsupported raw cartridge size: {} bytes (expected 8192 or 16384)", other),
+                        };
+                        println!("Loaded {}KB raw cartridge from {}", data.len() / 1024, path);
+                        (data, base)
+                    };
+                    (Some(rom), base)
+                }
+                None => (None, 0xA000),
             }
-            None => (None, 0xA000),
+        } else {
+            (None, 0xA000)
         };
 
         let mut atari800 = Atari800 {
@@ -87,7 +113,110 @@ impl Atari800 {
         cpu.reset(&mut atari800);  // atari800 implements Bus
         atari800.cpu = cpu;
 
+        // Load XEX file if specified
+        if is_xex {
+            atari800.load_xex(cart_path.unwrap());
+        }
+
         atari800
+    }
+
+    /// Load an Atari XEX/EXE/COM binary load file into RAM.
+    /// Parses segments, loads data, executes INIT routines, and sets RUN address.
+    fn load_xex(&mut self, path: &str) {
+        let data = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("Failed to load XEX '{}': {}", path, e));
+
+        let mut pos = 0;
+
+        // First segment must start with $FFFF header
+        if data.len() < 2 || data[0] != 0xFF || data[1] != 0xFF {
+            panic!("Not a valid XEX file: missing $FFFF header");
+        }
+        pos += 2;
+
+        let mut segment_count = 0;
+
+        while pos + 4 <= data.len() {
+            // Optional $FFFF header for subsequent segments
+            if pos + 2 <= data.len() && data[pos] == 0xFF && data[pos + 1] == 0xFF {
+                pos += 2;
+            }
+
+            if pos + 4 > data.len() {
+                break;
+            }
+
+            let start = data[pos] as u16 | (data[pos + 1] as u16) << 8;
+            let end = data[pos + 2] as u16 | (data[pos + 3] as u16) << 8;
+            pos += 4;
+
+            if end < start {
+                panic!("XEX segment error: end ${:04X} < start ${:04X}", end, start);
+            }
+
+            let len = (end - start + 1) as usize;
+            if pos + len > data.len() {
+                panic!("XEX segment ${:04X}-${:04X} exceeds file size", start, end);
+            }
+
+            // Load segment data into RAM
+            for i in 0..len {
+                self.mem.ram[(start as usize) + i] = data[pos + i];
+            }
+            segment_count += 1;
+            println!("  Segment {}: ${:04X}-${:04X} ({} bytes)", segment_count, start, end, len);
+            pos += len;
+
+            // Check for INIT address at $02E2
+            let init_addr = self.mem.ram[0x02E2] as u16 | (self.mem.ram[0x02E3] as u16) << 8;
+            if init_addr != 0 {
+                println!("  INIT: ${:04X}", init_addr);
+                // Push a return address that points to a BRK instruction.
+                // We place BRK at $0100 (bottom of stack page, rarely used).
+                self.mem.ram[0x0100] = 0x00; // BRK
+                let ret_addr: u16 = 0x0100 - 1; // RTS pops addr and adds 1
+                let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+                // Set up CPU to JSR to init routine
+                cpu.s = 0xFB;
+                cpu.pc = init_addr;
+                // Push return address onto stack (high byte first, then low)
+                cpu.s = cpu.s.wrapping_sub(1);
+                self.mem.ram[0x0100 + cpu.s as usize + 1] = (ret_addr >> 8) as u8;
+                cpu.s = cpu.s.wrapping_sub(1);
+                self.mem.ram[0x0100 + cpu.s as usize + 1] = ret_addr as u8;
+
+                // Execute until we hit our BRK sentinel
+                let mut max_cycles = 10_000_000u32;
+                loop {
+                    if cpu.pc == 0x0100 {
+                        break;
+                    }
+                    cpu.tick(&mut *self);
+                    max_cycles -= 1;
+                    if max_cycles == 0 {
+                        println!("  WARNING: INIT routine at ${:04X} did not return after 10M cycles", init_addr);
+                        break;
+                    }
+                }
+                self.cpu = cpu;
+
+                // Clear INIT vector
+                self.mem.ram[0x02E2] = 0;
+                self.mem.ram[0x02E3] = 0;
+            }
+        }
+
+        // Check for RUN address at $02E0
+        let run_addr = self.mem.ram[0x02E0] as u16 | (self.mem.ram[0x02E1] as u16) << 8;
+        if run_addr != 0 {
+            println!("  RUN: ${:04X}", run_addr);
+            self.cpu.pc = run_addr;
+        } else {
+            println!("  No RUN address specified");
+        }
+
+        println!("Loaded XEX from {} ({} segments)", path, segment_count);
     }
 
     pub fn tick(&mut self) {
