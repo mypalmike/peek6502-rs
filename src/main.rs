@@ -22,6 +22,7 @@ fn print_help() {
     println!("    -f, --fullspeed         Run at maximum speed (no speed limiting)");
     println!("    --cart1 <file>          Load cartridge ROM (8KB or 16KB, raw or .car)");
     println!("    --keyboard <mode>       Keyboard mapping mode: physical|modern (default: modern)");
+    println!("    --video-scaling <num>   Video window scaling factor (default: 2.0)");
     println!();
     println!("KEYBOARD MODES:");
     println!("    --keyboard=modern (default)");
@@ -47,6 +48,7 @@ fn print_help() {
     println!("    atari800-rs -f                         # Same as --fullspeed");
     println!("    atari800-rs --keyboard=physical        # Use physical key mapping");
     println!("    atari800-rs --cart1 basic.rom          # Load BASIC cartridge");
+    println!("    atari800-rs --video-scaling 3.0        # Use 3x window scaling (960x576)");
     println!("    atari800-rs --test                     # Run functional tests (full speed)");
     println!("    atari800-rs --animate                  # Run animation demo");
 }
@@ -81,6 +83,12 @@ fn main() {
         .map(|w| w[1].as_str())
         .unwrap_or("modern");
 
+    // Video scaling factor (default: 2.0)
+    let video_scaling = args.windows(2)
+        .find(|w| w[0] == "--video-scaling")
+        .and_then(|w| w[1].parse::<f64>().ok())
+        .unwrap_or(2.0);
+
     if run_functional_test {
         // Run the 6502 functional test suite
         let mut test = FunctionalTest::new();
@@ -113,14 +121,14 @@ fn main() {
         }
     } else if animate_mode {
         // Run color cycling animation test
-        run_animated_test();
+        run_animated_test(video_scaling);
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(speed_limit, cart1_path.as_deref(), keyboard_mode);
+        run_with_sdl(speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling);
     }
 }
 
-fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str) {
+fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64) {
     // Create keyboard mapper based on mode
     let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
         "physical" => Box::new(input::PhysicalMapper),
@@ -135,9 +143,11 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str)
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    // Create window (2x scale for better visibility)
+    // Create window with specified scaling factor
+    let window_width = (320.0 * video_scaling) as u32;
+    let window_height = (192.0 * video_scaling) as u32;
     let window = video_subsystem
-        .window("Atari 800 Emulator", 640, 384)
+        .window("Atari 800 Emulator", window_width, window_height)
         .position_centered()
         .build()
         .unwrap();
@@ -257,15 +267,17 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str)
     println!("Shutting down...");
 }
 
-fn run_animated_test() {
+fn run_animated_test(video_scaling: f64) {
 
     // Initialize SDL2
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    // Create window (2x scale for better visibility)
+    // Create window with specified scaling factor
+    let window_width = (320.0 * video_scaling) as u32;
+    let window_height = (192.0 * video_scaling) as u32;
     let window = video_subsystem
-        .window("Atari 800 Emulator - Animated Test", 640, 384)
+        .window("Atari 800 Emulator - Animated Test", window_width, window_height)
         .position_centered()
         .build()
         .unwrap();

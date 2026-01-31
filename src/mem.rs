@@ -68,13 +68,6 @@ impl Mem {
             return;
         }
 
-        // Debug: Watch DOSVEC writes
-        if addr == 0x000A || addr == 0x000B {
-            if addr == 0x000B {
-                let dosvec = self.ram[0x000A] as u16 | ((val as u16) << 8);
-            }
-        }
-
         self.ram[addr as usize] = val;
     }
 

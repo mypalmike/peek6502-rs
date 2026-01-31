@@ -398,32 +398,6 @@ impl Atari800 {
     /// Render one complete frame using ANTIC display list processing
     /// This simulates one full frame (192 visible scanlines for our simplified display)
     pub fn render(&mut self) {
-        // Debug: Print screen memory once at frame 300
-        static mut FRAME_COUNT: u32 = 0;
-        unsafe {
-            FRAME_COUNT += 1;
-            if FRAME_COUNT == 300 {
-                // Check first 3 lines of screen memory
-                eprintln!("\n=== SCREEN MEMORY DUMP ===");
-                for line in 0..3 {
-                    eprint!("Line {}: ", line);
-                    for i in 0..40 {
-                        let ch = self.mem.get_byte(0xCC40 + line * 40 + i);
-                        if ch == 0x00 {
-                            eprint!("_");
-                        } else {
-                            eprint!("{:02X}", ch);
-                        }
-                    }
-                    eprintln!();
-                }
-
-                // Also check DOSVEC
-                let dosvec = self.mem.get_byte(0x000A) as u16 | ((self.mem.get_byte(0x000B) as u16) << 8);
-                eprintln!("DOSVEC = ${:04X}", dosvec);
-            }
-        }
-
         // Clear framebuffer to background color
         self.gtia.clear_framebuffer();
 
