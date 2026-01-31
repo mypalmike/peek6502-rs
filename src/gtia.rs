@@ -199,22 +199,77 @@ impl Gtia {
 
     /// Colorize an ANTIC scanline and write to framebuffer
     /// Called once per scanline during frame rendering
-    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384]) {
-        for x in 0..320 {
-            let color_index = antic_pixels[x];
-            let (r, g, b) = self.get_color_for_index(color_index);
-            self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+    /// antic_mode: current ANTIC display mode (needed for GTIA mode 9/10/11 detection)
+    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8) {
+        let gtia_mode = (self.prior >> 6) & 0x03;
+
+        // GTIA modes 9/10/11: reinterpret ANTIC mode F data
+        if gtia_mode != 0 && antic_mode == 0x0F {
+            // Group every 4 ANTIC pixels into one 4-bit value → 80 wide pixels
+            for group in 0..80 {
+                let base = group * 4;
+                let nybble = ((antic_pixels[base] & 1) << 3)
+                    | ((antic_pixels[base + 1] & 1) << 2)
+                    | ((antic_pixels[base + 2] & 1) << 1)
+                    | (antic_pixels[base + 3] & 1);
+
+                let atari_color = match gtia_mode {
+                    1 => {
+                        // GTIA mode 9: 16 luminances, hue from COLBK
+                        (self.colbk & 0xF0) | (nybble << 1)
+                    }
+                    2 => {
+                        // GTIA mode 10: 9 colors from registers
+                        match nybble {
+                            0 => self.colpm[0],
+                            1 => self.colpm[1],
+                            2 => self.colpm[2],
+                            3 => self.colpm[3],
+                            4 => self.colpf[0],
+                            5 => self.colpf[1],
+                            6 => self.colpf[2],
+                            7 => self.colpf[3],
+                            _ => self.colbk,
+                        }
+                    }
+                    3 => {
+                        // GTIA mode 11: 16 hues, luminance from COLBK
+                        (nybble << 4) | (self.colbk & 0x0F)
+                    }
+                    _ => self.colbk,
+                };
+
+                let (r, g, b) = self.color_to_rgb(atari_color);
+                // Each logical pixel is 4 color clocks wide
+                for dx in 0..4 {
+                    let x = group * 4 + dx;
+                    if x < 320 {
+                        self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+                    }
+                }
+            }
+        } else {
+            // Standard color index mapping
+            for x in 0..320 {
+                let color_index = antic_pixels[x];
+                let (r, g, b) = self.get_color_for_index(color_index);
+                self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+            }
         }
     }
 
-    /// Get RGB color for a color index (0-3)
-    /// Private method - accesses color registers directly without read_register() hack
+    /// Get RGB color for a color index
     fn get_color_for_index(&self, index: u8) -> (u8, u8, u8) {
         let atari_color = match index {
             0 => self.colbk,           // Background
             1 => self.colpf[0],        // Playfield 0
             2 => self.colpf[1],        // Playfield 1
             3 => self.colpf[2],        // Playfield 2
+            4 => self.colpf[3],        // Playfield 3
+            5 => self.colpm[0],        // Player/Missile 0
+            6 => self.colpm[1],        // Player/Missile 1
+            7 => self.colpm[2],        // Player/Missile 2
+            8 => self.colpm[3],        // Player/Missile 3
             _ => self.colbk,           // Fallback
         };
         self.color_to_rgb(atari_color)

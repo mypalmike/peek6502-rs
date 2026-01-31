@@ -442,7 +442,7 @@ impl Atari800 {
         }
         for scanline in 0..192 {
             self.antic.process_scanline(&self.mem);
-            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer);
+            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode());
         }
     }
 

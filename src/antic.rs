@@ -263,16 +263,38 @@ impl Antic {
         self.scanline
     }
 
+    /// Get current ANTIC mode (used by GTIA for mode F/GTIA mode detection)
+    pub fn get_current_mode(&self) -> u8 {
+        self.current_mode
+    }
+
+    /// Mode table entry
+    fn mode_info(mode: u8) -> (u8, u16) {
+        // Returns (scanlines_per_row, bytes_per_row)
+        match mode {
+            0x02 => (8, 40),
+            0x03 => (10, 40),
+            0x04 => (8, 40),
+            0x05 => (16, 40),
+            0x06 => (8, 20),
+            0x07 => (16, 20),
+            0x08 => (8, 40),
+            0x09 => (4, 20),
+            0x0A => (4, 20),
+            0x0B => (2, 20),
+            0x0C => (1, 20),
+            0x0D => (2, 40),
+            0x0E => (1, 40),
+            0x0F => (1, 40),
+            _ => (1, 0),
+        }
+    }
+
     /// Process one scanline using the display list
     /// This should be called once per scanline (during horizontal blank)
     pub fn process_scanline(&mut self, mem: &Mem) {
         // Clear scanline buffer to background
         self.scanline_buffer.fill(0);
-
-        // Only process if DMA is enabled
-        // if !self.dma_enabled {
-        //     return;
-        // }
 
         // If we need to fetch a new display list instruction
         if self.lines_remaining == 0 {
@@ -280,16 +302,28 @@ impl Antic {
         }
 
         // Generate scanline data based on current mode
-        if self.current_mode == 0x00 {
-            // Blank line - already filled with 0
-        } else if self.current_mode == 0x02 {
-            // Mode 2: 40-column text, 8 scanlines per character row
-            self.render_mode2_scanline(mem);
+        match self.current_mode {
+            0x00 => {} // Blank line - already filled with 0
+            0x02 | 0x03 => self.render_text_hires(mem),
+            0x04 | 0x05 => self.render_text_multicolor(mem),
+            0x06 | 0x07 => self.render_text_wide(mem),
+            0x08 => self.render_bitmap_1bpp(mem, 40, 1, 2, 0),
+            0x09 => self.render_bitmap_1bpp(mem, 20, 4, 1, 0),
+            0x0A => self.render_bitmap_2bpp(mem, 20, 4),
+            0x0B => self.render_bitmap_1bpp(mem, 20, 2, 2, 0),
+            0x0C => self.render_bitmap_1bpp(mem, 20, 2, 2, 0),
+            0x0D => self.render_bitmap_2bpp(mem, 40, 2),
+            0x0E => self.render_bitmap_2bpp(mem, 40, 2),
+            0x0F => self.render_bitmap_1bpp(mem, 40, 1, 2, 0),
+            _ => {}
         }
-        // TODO: Add other modes
 
-        // Move to next line
+        // Move to next line and advance screen pointer on last scanline of row
         if self.lines_remaining > 0 {
+            let (scanlines, bytes_per_row) = Self::mode_info(self.current_mode);
+            if self.mode_line == scanlines - 1 && self.current_mode >= 0x02 {
+                self.screen_ptr = self.screen_ptr.wrapping_add(bytes_per_row);
+            }
             self.lines_remaining -= 1;
             self.mode_line += 1;
         }
@@ -340,50 +374,160 @@ impl Antic {
                 let count = ((instruction >> 4) & 0x07) as u8;
                 count + 1
             }
-            0x02..=0x07 => 8,  // Text modes: 8 scanlines per character row
-            0x08..=0x0F => {
-                // Graphics modes - varies by mode
-                8  // Simplified for now
-            }
+            0x02..=0x0F => Self::mode_info(mode).0,
             _ => 1,
         };
     }
 
-    /// Render one scanline of ANTIC mode 2 (40-column text)
-    fn render_mode2_scanline(&mut self, mem: &Mem) {
-        let char_base = if self.chbase == 0 {
-            // CHBASE=0 means use OS ROM character set at $E000
+    /// Get character set base address
+    fn char_base(&self) -> u16 {
+        if self.chbase == 0 {
             0xE000u16
         } else {
-            // Otherwise use CHBASE register (bits 7-1 = address bits 15-9)
             (self.chbase as u16) << 8
-        };
+        }
+    }
 
-        // Render 40 characters
-        for char_col in 0..40 {
-            // Read character code from screen RAM
+    /// Render one scanline of text hi-res modes (2, 3)
+    /// Mode 2: 40 chars, 8 scanlines/row, inverse video via bit 7
+    /// Mode 3: 40 chars, 10 scanlines/row, lowercase descenders
+    fn render_text_hires(&mut self, mem: &Mem) {
+        let char_base = self.char_base();
+
+        for char_col in 0u16..40 {
             let char_code = mem.get_byte(self.screen_ptr + char_col);
-
-            // Get character bitmap for this scanline
-            // Bit 7 = inverse video, bits 0-6 = character index
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
-            let char_addr = char_base + font_index * 8 + (self.mode_line as u16);
-            let char_data = if inverse { mem.get_byte(char_addr) ^ 0xFF } else { mem.get_byte(char_addr) };
 
-            // Convert character bitmap to pixels (8 pixels per character)
-            for bit in 0..8 {
+            // For mode 3, scanlines 8-9 use descender data
+            // Characters 0-31 and 96-127 show descenders; others are blank
+            let font_row = self.mode_line;
+            let char_data = if font_row < 8 {
+                let char_addr = char_base + font_index * 8 + (font_row as u16);
+                mem.get_byte(char_addr)
+            } else if self.current_mode == 0x03 {
+                // Descender rows (8-9): only lowercase chars (96-127 in font = 0x60-0x7F)
+                // Map to next page of character set
+                if font_index >= 0x60 {
+                    let char_addr = char_base + 0x400 + (font_index - 0x60) * 8 + ((font_row - 8) as u16);
+                    mem.get_byte(char_addr)
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let char_data = if inverse { char_data ^ 0xFF } else { char_data };
+
+            for bit in 0u16..8 {
                 let pixel_on = (char_data & (1 << (7 - bit))) != 0;
                 let pixel_x = (char_col * 8 + bit) as usize;
-
-                // Mode 2: background = COLPF2 (index 3), foreground = COLPF1 (index 2)
-                self.scanline_buffer[pixel_x] = if pixel_on { 2 } else { 3 };
+                if pixel_x < 384 {
+                    // foreground = COLPF1 (index 2), background = COLPF2 (index 3)
+                    self.scanline_buffer[pixel_x] = if pixel_on { 2 } else { 3 };
+                }
             }
         }
+    }
 
-        // If this was the last scanline of this character row, advance screen pointer
-        if self.mode_line == 7 {
-            self.screen_ptr = self.screen_ptr.wrapping_add(40);
+    /// Render one scanline of text multi-color modes (4, 5)
+    /// 40 chars, 2-bit pixel pairs from font data
+    /// Colors: 00=COLBK, 01=COLPF0, 10=COLPF1, 11=COLPF2 (or COLPF3 if inverse)
+    fn render_text_multicolor(&mut self, mem: &Mem) {
+        let char_base = self.char_base();
+        // Font row wraps at 8 (modes 4/5 reuse the 8-line font)
+        let font_row = (self.mode_line % 8) as u16;
+
+        for char_col in 0u16..40 {
+            let char_code = mem.get_byte(self.screen_ptr + char_col);
+            let inverse = (char_code & 0x80) != 0;
+            let font_index = (char_code & 0x7F) as u16;
+            let char_addr = char_base + font_index * 8 + font_row;
+            let char_data = mem.get_byte(char_addr);
+
+            // Each byte = 4 pixel pairs, each 2 color clocks wide = 8 color clocks
+            for pair in 0u16..4 {
+                let bits = (char_data >> (6 - pair * 2)) & 0x03;
+                let color_index = match bits {
+                    0b00 => 0, // COLBK
+                    0b01 => 1, // COLPF0
+                    0b10 => 2, // COLPF1
+                    0b11 => if inverse { 4 } else { 3 }, // COLPF3 or COLPF2
+                    _ => 0,
+                };
+                // Each pixel pair is 2 color clocks wide
+                let pixel_x = (char_col * 8 + pair * 2) as usize;
+                if pixel_x + 1 < 384 {
+                    self.scanline_buffer[pixel_x] = color_index;
+                    self.scanline_buffer[pixel_x + 1] = color_index;
+                }
+            }
+        }
+    }
+
+    /// Render one scanline of text wide modes (6, 7)
+    /// 20 chars, bits 6-7 select color, bits 0-5 = char index (64 chars)
+    /// Each pixel is 2 color clocks wide = 160 visible pixels
+    fn render_text_wide(&mut self, mem: &Mem) {
+        let char_base = self.char_base();
+        let font_row = (self.mode_line % 8) as u16;
+
+        for char_col in 0u16..20 {
+            let char_code = mem.get_byte(self.screen_ptr + char_col);
+            let color_select = (char_code >> 6) & 0x03;
+            let font_index = (char_code & 0x3F) as u16;
+            let char_addr = char_base + font_index * 8 + font_row;
+            let char_data = mem.get_byte(char_addr);
+
+            // Color index: 1=COLPF0, 2=COLPF1, 3=COLPF2, 4=COLPF3
+            let fg_index = color_select + 1; // maps 0->1, 1->2, 2->3, 3->4
+
+            for bit in 0u16..8 {
+                let pixel_on = (char_data & (1 << (7 - bit))) != 0;
+                // Each pixel is 2 color clocks wide, 20 chars * 16 clocks = 320
+                let pixel_x = (char_col * 16 + bit * 2) as usize;
+                if pixel_x + 1 < 384 {
+                    let color = if pixel_on { fg_index } else { 0 }; // bg = COLBK
+                    self.scanline_buffer[pixel_x] = color;
+                    self.scanline_buffer[pixel_x + 1] = color;
+                }
+            }
+        }
+    }
+
+    /// Render one scanline of 1bpp bitmap modes (8, 9, B, C, F)
+    fn render_bitmap_1bpp(&mut self, mem: &Mem, bytes_per_row: u16, pixel_width: u16, fg_index: u8, bg_index: u8) {
+        for byte_col in 0..bytes_per_row {
+            let data = mem.get_byte(self.screen_ptr + byte_col);
+            for bit in 0u16..8 {
+                let pixel_on = (data & (1 << (7 - bit))) != 0;
+                let base_x = (byte_col * 8 * pixel_width + bit * pixel_width) as usize;
+                let color = if pixel_on { fg_index } else { bg_index };
+                for w in 0..(pixel_width as usize) {
+                    if base_x + w < 384 {
+                        self.scanline_buffer[base_x + w] = color;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Render one scanline of 2bpp bitmap modes (A, D, E)
+    /// 2-bit pairs → indices 0 (COLBK), 1 (COLPF0), 2 (COLPF1), 3 (COLPF2)
+    fn render_bitmap_2bpp(&mut self, mem: &Mem, bytes_per_row: u16, pixel_width: u16) {
+        for byte_col in 0..bytes_per_row {
+            let data = mem.get_byte(self.screen_ptr + byte_col);
+            for pair in 0u16..4 {
+                let bits = (data >> (6 - pair * 2)) & 0x03;
+                let color_index = bits; // 0=COLBK, 1=COLPF0, 2=COLPF1, 3=COLPF2
+                let base_x = (byte_col * 4 * pixel_width + pair * pixel_width) as usize;
+                for w in 0..(pixel_width as usize) {
+                    if base_x + w < 384 {
+                        self.scanline_buffer[base_x + w] = color_index;
+                    }
+                }
+            }
         }
     }
 }
