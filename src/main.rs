@@ -321,7 +321,7 @@ fn run_animated_test(video_scaling: f64) {
         // Animate background color - cycle through hues
         let hue = (frame_count >> 2) & 0x0F;  // Slow down color changes
         let color_value = (hue << 4) | 0x0E;  // High luminance
-        atari800.gtia.write_register(0xD01A, color_value);  // COLBK
+        atari800.gtia.write_register(0xD018, color_value);  // COLPF2 (text background in mode 2)
 
         // Render frame
         atari800.render();
