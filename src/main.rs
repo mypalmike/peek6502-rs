@@ -144,8 +144,8 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
     let video_subsystem = sdl_context.video().unwrap();
 
     // Create window with specified scaling factor
-    let window_width = (320.0 * video_scaling) as u32;
-    let window_height = (192.0 * video_scaling) as u32;
+    let window_width = (384.0 * video_scaling) as u32;
+    let window_height = (240.0 * video_scaling) as u32;
     let window = video_subsystem
         .window("Atari 800 Emulator", window_width, window_height)
         .position_centered()
@@ -155,9 +155,9 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
 
-    // Create texture for framebuffer (320x192)
+    // Create texture for framebuffer (384x240)
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 320, 192)
+        .create_texture_streaming(PixelFormatEnum::RGB24, 384, 240)
         .unwrap();
 
     // Create Atari800 instance
@@ -234,7 +234,7 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
 
         // Copy framebuffer to SDL texture
         texture
-            .update(None, &atari800.gtia.framebuffer.pixels, 320 * 3)
+            .update(None, &atari800.gtia.framebuffer.pixels, 384 * 3)
             .unwrap();
 
         // Draw to screen
@@ -274,8 +274,8 @@ fn run_animated_test(video_scaling: f64) {
     let video_subsystem = sdl_context.video().unwrap();
 
     // Create window with specified scaling factor
-    let window_width = (320.0 * video_scaling) as u32;
-    let window_height = (192.0 * video_scaling) as u32;
+    let window_width = (384.0 * video_scaling) as u32;
+    let window_height = (240.0 * video_scaling) as u32;
     let window = video_subsystem
         .window("Atari 800 Emulator - Animated Test", window_width, window_height)
         .position_centered()
@@ -285,9 +285,9 @@ fn run_animated_test(video_scaling: f64) {
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
 
-    // Create texture for framebuffer (320x192)
+    // Create texture for framebuffer (384x240)
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 320, 192)
+        .create_texture_streaming(PixelFormatEnum::RGB24, 384, 240)
         .unwrap();
 
     // Create Atari800 instance
@@ -328,7 +328,7 @@ fn run_animated_test(video_scaling: f64) {
 
         // Copy framebuffer to SDL texture
         texture
-            .update(None, &atari800.gtia.framebuffer.pixels, 320 * 3)
+            .update(None, &atari800.gtia.framebuffer.pixels, 384 * 3)
             .unwrap();
 
         // Draw to screen

@@ -1,5 +1,13 @@
 use crate::framebuffer::Framebuffer;
 
+// Overscan dimensions for NTSC display
+const OVERSCAN_LEFT: usize = 32;
+const OVERSCAN_TOP: usize = 24;
+const PLAYFIELD_WIDTH: usize = 320;
+const PLAYFIELD_HEIGHT: usize = 192;
+const FRAMEBUFFER_WIDTH: usize = 384;   // 320 + 32*2
+const FRAMEBUFFER_HEIGHT: usize = 240;  // 192 + 24*2
+
 /// GTIA - Graphics Television Interface Adaptor
 /// Generates video output, handles player/missile graphics, and collision detection.
 ///
@@ -80,7 +88,7 @@ impl Gtia {
             trig: [1; 4],   // 1 = not pressed
             pixel_x: 0,
             pixel_y: 0,
-            framebuffer: Framebuffer::new(320, 192),
+            framebuffer: Framebuffer::new(FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT),
         }
     }
 
@@ -193,8 +201,20 @@ impl Gtia {
     /// Clear framebuffer to background color
     /// Called at the start of each frame
     pub fn clear_framebuffer(&mut self) {
+        // Clear entire framebuffer to black (overscan area)
+        self.framebuffer.clear();
+
+        // Fill only the playfield area with background color
         let (r, g, b) = self.color_to_rgb(self.colbk);
-        self.framebuffer.clear_color(r, g, b);
+        for y in 0..PLAYFIELD_HEIGHT {
+            for x in 0..PLAYFIELD_WIDTH {
+                self.framebuffer.set_pixel(
+                    OVERSCAN_LEFT + x,
+                    OVERSCAN_TOP + y,
+                    r, g, b
+                );
+            }
+        }
     }
 
     /// Colorize an ANTIC scanline and write to framebuffer
@@ -244,7 +264,7 @@ impl Gtia {
                 for dx in 0..4 {
                     let x = group * 4 + dx;
                     if x < 320 {
-                        self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+                        self.framebuffer.set_pixel(OVERSCAN_LEFT + x, OVERSCAN_TOP + scanline_y, r, g, b);
                     }
                 }
             }
@@ -253,7 +273,7 @@ impl Gtia {
             for x in 0..320 {
                 let color_index = antic_pixels[x];
                 let (r, g, b) = self.get_color_for_index(color_index);
-                self.framebuffer.set_pixel(x, scanline_y, r, g, b);
+                self.framebuffer.set_pixel(OVERSCAN_LEFT + x, OVERSCAN_TOP + scanline_y, r, g, b);
             }
         }
     }
