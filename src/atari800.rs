@@ -396,7 +396,7 @@ impl Atari800 {
     }
 
     /// Render one complete frame using ANTIC display list processing
-    /// This simulates one full frame (192 visible scanlines for our simplified display)
+    /// Processes all 240 visible NTSC scanlines
     pub fn render(&mut self) {
         // Clear framebuffer to background color
         self.gtia.clear_framebuffer();
@@ -404,17 +404,9 @@ impl Atari800 {
         // Reset ANTIC display list state for new frame (simulates vertical blank)
         self.antic.start_frame();
 
-        // Process scanlines through ANTIC and GTIA
-        // NTSC visible area: 240 scanlines of display list processing,
-        // but only 192 scanlines rendered to framebuffer.
-        // The first 8 scanlines are top blank (VBLANK end), then 24 blank from
-        // the display list's $70 instructions, then 192 visible lines, then bottom blank.
-        // We process 24 blank scanlines first (display list overhead), then render 192.
-        let blank_lines = 24;
-        for _ in 0..blank_lines {
-            self.antic.process_scanline(&self.mem);
-        }
-        for scanline in 0..192 {
+        // Process all 240 visible NTSC scanlines through ANTIC display list
+        // The display list itself controls which lines are blank (overscan) vs. content
+        for scanline in 0..240 {
             self.antic.process_scanline(&self.mem);
             self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode());
         }
