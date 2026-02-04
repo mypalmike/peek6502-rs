@@ -16,8 +16,8 @@ pub struct Antic {
     dma_enabled: bool,
 
     // Scanline tracking
-    scanline: u16,       // Current scanline (0-261 for NTSC)
-    horizontal_pos: u8,  // Horizontal position within scanline
+    pub scanline: u16,       // Current scanline (0-261 for NTSC)
+    horizontal_pos: u8,      // Horizontal position within scanline
 
     // Display list state
     current_mode: u8,    // Current ANTIC mode being displayed

@@ -30,11 +30,11 @@ impl Pia {
             porta: 0xFF,
             ddra: 0,
             pactl: 0,           // Bit 2 = 0: $D300 accesses DDRA initially
-            portb: 0xFF,
+            portb: 0x00,        // PORTB starts with ROMs enabled (bits 0-1 low for 800XL)
             ddrb: 0,
             pbctl: 0,           // Bit 2 = 0: $D302 accesses DDRB initially
             porta_input: 0xFF,  // No joystick input (active low)
-            portb_input: 0xFF,  // No joystick input
+            portb_input: 0xFC,  // PORTB bits 0-1 pulled low by hardware (ROMs enabled on 800XL)
         }
     }
 
@@ -57,10 +57,7 @@ impl Pia {
                 }
             }
             0x01 => {
-                // Read PACTL (bits 7,6 are IRQ flags, read-only; cleared on read)
-                self.pactl
-            }
-            0x02 => {
+                // $D301: Read PORTB data register (XL memory control)
                 if (self.pbctl & 0x04) != 0 {
                     // PBCTL bit 2 set: read PORTB data register
                     (self.portb & self.ddrb) | (self.portb_input & !self.ddrb)
@@ -68,6 +65,10 @@ impl Pia {
                     // PBCTL bit 2 clear: read DDRB
                     self.ddrb
                 }
+            }
+            0x02 => {
+                // $D302: Read PACTL (bits 7,6 are IRQ flags, read-only; cleared on read)
+                self.pactl
             }
             0x03 => {
                 // Read PBCTL
@@ -90,10 +91,7 @@ impl Pia {
                 }
             }
             0x01 => {
-                // Write PACTL (bits 7,6 are read-only IRQ flags)
-                self.pactl = (self.pactl & 0xC0) | (val & 0x3F);
-            }
-            0x02 => {
+                // $D301: Write PORTB (XL memory control: bit 0=OS ROM, bit 1=BASIC ROM)
                 if (self.pbctl & 0x04) != 0 {
                     // PBCTL bit 2 set: write PORTB data register
                     self.portb = val;
@@ -101,6 +99,10 @@ impl Pia {
                     // PBCTL bit 2 clear: write DDRB
                     self.ddrb = val;
                 }
+            }
+            0x02 => {
+                // $D302: Write PACTL (bits 7,6 are read-only IRQ flags)
+                self.pactl = (self.pactl & 0xC0) | (val & 0x3F);
             }
             0x03 => {
                 // Write PBCTL (bits 7,6 are read-only IRQ flags)

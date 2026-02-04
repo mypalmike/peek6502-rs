@@ -80,7 +80,7 @@ impl Gtia {
             p1pl: 0,
             p2pl: 0,
             p3pl: 0,
-            trig: [1; 4],   // 1 = not pressed
+            trig: [1, 1, 1, 0],   // TRIG0-2: 1 (not pressed), TRIG3: 0 (no cartridge present)
             pixel_x: 0,
             pixel_y: 0,
             framebuffer: Framebuffer::new(384, 240),  // 384x240 NTSC visible area
@@ -296,6 +296,15 @@ impl Gtia {
         file.write_all(&self.framebuffer.pixels)?;
 
         Ok(())
+    }
+
+    /// Set joystick trigger state (for input handling)
+    /// port: 0-3 for TRIG0-TRIG3
+    /// value: 0 = pressed, 1 = not pressed (active low)
+    pub fn set_trigger(&mut self, port: usize, value: u8) {
+        if port < 4 {
+            self.trig[port] = value;
+        }
     }
 }
 

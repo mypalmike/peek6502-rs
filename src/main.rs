@@ -1,4 +1,5 @@
 use atari800_rs::atari800::Atari800;
+use atari800_rs::machine_config::MachineType;
 use atari800_rs::functional_test::FunctionalTest;
 use atari800_rs::input;
 use std::env;
@@ -20,6 +21,7 @@ fn print_help() {
     println!("    -d, --debug             Run in debugger mode");
     println!("    -a, --animate           Run animated test pattern");
     println!("    -f, --fullspeed         Run at maximum speed (no speed limiting)");
+    println!("    --machine <type>        Machine type: 800, 800xl (default: 800)");
     println!("    --cart1 <file>          Load cartridge ROM (8KB or 16KB, raw or .car)");
     println!("    --keyboard <mode>       Keyboard mapping mode: physical|modern (default: modern)");
     println!("    --video-scaling <num>   Video window scaling factor (default: 2.0)");
@@ -72,6 +74,20 @@ fn main() {
     let full_speed = args.iter().any(|arg| arg == "--fullspeed" || arg == "-f");
     let speed_limit = !full_speed && !run_functional_test;  // Disable for test mode too
 
+    // Machine type (default: 800)
+    let machine_type = args.windows(2)
+        .find(|w| w[0] == "--machine")
+        .and_then(|w| match w[1].as_str() {
+            "800" => Some(MachineType::Atari800),
+            "800xl" => Some(MachineType::Atari800XL),
+            _ => {
+                eprintln!("Unknown machine type: {}", w[1]);
+                eprintln!("Supported machine types: 800, 800xl");
+                std::process::exit(1);
+            }
+        })
+        .unwrap_or(MachineType::Atari800);  // Default to 800
+
     // Cartridge file
     let cart1_path = args.windows(2)
         .find(|w| w[0] == "--cart1")
@@ -94,9 +110,9 @@ fn main() {
         let mut test = FunctionalTest::new();
         test.run();
     } else if render_test {
-        // Render test pattern and save as image
-        println!("Rendering Atari 800 test pattern...");
-        let mut atari800 = Atari800::new();
+        // Render test pattern and save as image (no CPU, just ANTIC/GTIA test)
+        println!("Rendering ANTIC/GTIA test pattern...");
+        let mut atari800 = Atari800::for_render_test();
 
         // Render the screen
         atari800.render();
@@ -112,23 +128,23 @@ fn main() {
         println!("  convert atari800_output.ppm atari800_output.png");
         println!("  open atari800_output.png");
     } else if debugger_mode {
-        // Run the Atari 800 emulator with debugger
-        println!("Starting Atari 800 with debugger");
-        let mut atari800 = Atari800::new();
+        // Run the emulator with debugger
+        println!("Starting {:?} with debugger", machine_type);
+        let mut atari800 = Atari800::with_config(machine_type, cart1_path.as_deref());
 
         loop {
             atari800.tick();
         }
     } else if animate_mode {
         // Run color cycling animation test
-        run_animated_test(video_scaling);
+        run_animated_test(machine_type, video_scaling);
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling);
+        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling);
     }
 }
 
-fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64) {
+fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64) {
     // Create keyboard mapper based on mode
     let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
         "physical" => Box::new(input::PhysicalMapper),
@@ -161,10 +177,7 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
         .unwrap();
 
     // Create Atari800 instance
-    let mut atari800 = Atari800::with_cart(cart_path);
-
-    // Enable brief tracing after 5 seconds to see where we are
-    let mut trace_enabled = false;
+    let mut atari800 = Atari800::with_config(machine_type, cart_path);
 
 
     // Initialize timing for speed limiting
@@ -185,6 +198,19 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
                   keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RCtrl);
         let host_alt = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LAlt) ||
                       keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RAlt);
+
+        // Update joystick Option key state and directions
+        atari800.set_joystick_option(host_alt);
+        if host_alt {
+            let up = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up);
+            let down = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down);
+            let left = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left);
+            let right = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right);
+            let trigger = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Slash);
+
+            atari800.handle_joystick_direction(up, down, left, right);
+            atari800.handle_joystick_trigger(trigger);
+        }
 
         // Handle events
         for event in event_pump.poll_iter() {
@@ -256,18 +282,19 @@ fn run_with_sdl(speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str,
 
         frame_count += 1;
 
-        // Enable tracing after 5 seconds (300 frames) to see where execution is
-        // if frame_count == 300 && !trace_enabled {
-        //     eprintln!("\n=== ENABLING CPU TRACE ===");
-        //     atari800.enable_cpu_trace(100);
-        //     trace_enabled = true;
-        // }
+        // Debug: Show PC for first few frames to see what's happening
+        if frame_count <= 10 || (frame_count % 60 == 0 && frame_count <= 300) {
+            let pc = atari800.get_pc();
+            let in_rom = atari800.is_executing_from_rom();
+            eprintln!("Frame {}: PC=${:04X} ({})",
+                frame_count, pc, if in_rom { "ROM" } else { "RAM" });
+        }
     }
 
     println!("Shutting down...");
 }
 
-fn run_animated_test(video_scaling: f64) {
+fn run_animated_test(_machine_type: MachineType, video_scaling: f64) {
 
     // Initialize SDL2
     let sdl_context = sdl2::init().unwrap();
@@ -290,8 +317,8 @@ fn run_animated_test(video_scaling: f64) {
         .create_texture_streaming(PixelFormatEnum::RGB24, 384, 240)
         .unwrap();
 
-    // Create Atari800 instance
-    let mut atari800 = Atari800::new();
+    // Create Atari800 instance for render testing (no CPU, no ROMs)
+    let mut atari800 = Atari800::for_render_test();
 
     // Set up test pattern for animation
     atari800.setup_test_pattern();
