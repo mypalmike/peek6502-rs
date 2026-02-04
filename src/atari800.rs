@@ -619,7 +619,10 @@ impl Atari800 {
         // The display list itself controls which lines are blank (overscan) vs. content
         for scanline in 0..240 {
             self.antic.process_scanline(&temp_mem);
-            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode());
+            // Fetch PM graphics from memory via DMA
+            self.antic.fetch_pm_data(&temp_mem);
+            // Render the scanline with PM DMA data
+            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode(), Some(&self.antic.pm_data));
         }
 
         // Update memory if ANTIC modified anything (currently no-op)

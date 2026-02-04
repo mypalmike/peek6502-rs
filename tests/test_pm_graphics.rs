@@ -62,7 +62,7 @@ fn test_hitclr_clears_collisions() {
     }
 
     // Render the scanline to trigger collisions
-    gtia.render_scanline(100, &scanline, 0x02);
+    gtia.render_scanline(100, &scanline, 0x02, None);
 
     // Check that collision was detected
     let p0pf = gtia.read_register(0xD004);
@@ -109,7 +109,7 @@ fn test_player_to_playfield_collision() {
     }
 
     // Render the scanline
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Check P0PF collision register
     let p0pf = gtia.read_register(0xD004);
@@ -134,7 +134,7 @@ fn test_player_to_player_collision() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Check P0PL and P1PL collision registers
     let p0pl = gtia.read_register(0xD00C);
@@ -163,7 +163,7 @@ fn test_missile_rendering() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Verify framebuffer has missile pixels
     // At position 100-101, should see missile color (white)
@@ -187,7 +187,7 @@ fn test_gractl_disable_players() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Get background color for comparison
     let (bg_r, bg_g, bg_b) = gtia.framebuffer.get_pixel(32 + 100, 50);
@@ -195,7 +195,7 @@ fn test_gractl_disable_players() {
     // Now enable players and render again
     gtia.write_register(0xD01D, 0b10);
     gtia.clear_framebuffer();
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     let (p_r, p_g, p_b) = gtia.framebuffer.get_pixel(32 + 100, 50);
 
@@ -225,7 +225,7 @@ fn test_priority_mode_0() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // At position 100 (where both player and playfield exist),
     // player should be visible (mode 0 = PM in front)
@@ -257,7 +257,7 @@ fn test_priority_mode_3() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, None);
 
     // At position 100 (where both player and playfield exist),
     // playfield should be visible (mode 3 = PF in front)
@@ -286,15 +286,15 @@ fn test_vdelay_player() {
     let scanline = [0u8; 384];
 
     // Render even scanline (0) - should use delayed value (initially 0)
-    gtia.render_scanline(0, &scanline, 0x02);
+    gtia.render_scanline(0, &scanline, 0x02, None);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(32 + 100, 0);
 
     // Render odd scanline (1) - should use current value (0xFF) and store it
-    gtia.render_scanline(1, &scanline, 0x02);
+    gtia.render_scanline(1, &scanline, 0x02, None);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(32 + 100, 1);
 
     // Render even scanline (2) - should now use delayed value (0xFF from odd scanline)
-    gtia.render_scanline(2, &scanline, 0x02);
+    gtia.render_scanline(2, &scanline, 0x02, None);
     let (r2, g2, b2) = gtia.framebuffer.get_pixel(32 + 100, 2);
 
     // Even scanline 0: delayed value is 0 (not set yet), so should be dark
@@ -329,10 +329,10 @@ fn test_vdelay_disabled() {
     let scanline = [0u8; 384];
 
     // Render even and odd scanlines
-    gtia.render_scanline(0, &scanline, 0x02);
+    gtia.render_scanline(0, &scanline, 0x02, None);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(32 + 100, 0);
 
-    gtia.render_scanline(1, &scanline, 0x02);
+    gtia.render_scanline(1, &scanline, 0x02, None);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(32 + 100, 1);
 
     // Both should be bright (no delay, always use current value)

@@ -301,7 +301,8 @@ impl Gtia {
     /// Generate PM graphics for the current scanline
     /// Fills pm_scanline buffer with PM object bits
     /// scanline_y: current scanline number (used for VDELAY)
-    fn generate_pm_scanline(&mut self, scanline_y: usize) {
+    /// pm_dma_data: optional PM data from ANTIC DMA (if None, uses GRAFP/GRAFM registers)
+    fn generate_pm_scanline(&mut self, scanline_y: usize, pm_dma_data: Option<&[u8; 5]>) {
         // Clear PM scanline buffer
         self.pm_scanline = [0; 384];
 
@@ -317,21 +318,27 @@ impl Gtia {
                 let hpos = self.hposp[p] as usize;
                 let size_mode = (self.sizep[p] & 0x03) as usize;
 
-                // Check if this player has VDELAY enabled
-                let vdelay_enabled = (self.vdelay & (1 << p)) != 0;
-
                 // Determine which graphics to use
-                let graf = if vdelay_enabled && is_even_scanline {
-                    // Even scanline with VDELAY: use delayed (previous) value
-                    self.grafp_delayed[p]
+                let graf = if let Some(dma_data) = pm_dma_data {
+                    // Use PM DMA data from ANTIC (DMA mode takes precedence)
+                    dma_data[1 + p]
                 } else {
-                    // Odd scanline or no VDELAY: use current value
-                    let current_graf = self.grafp[p];
-                    // Store for next even scanline
-                    if vdelay_enabled && !is_even_scanline {
-                        self.grafp_delayed[p] = current_graf;
+                    // Use GRAFP registers (register mode)
+                    // Check if this player has VDELAY enabled
+                    let vdelay_enabled = (self.vdelay & (1 << p)) != 0;
+
+                    if vdelay_enabled && is_even_scanline {
+                        // Even scanline with VDELAY: use delayed (previous) value
+                        self.grafp_delayed[p]
+                    } else {
+                        // Odd scanline or no VDELAY: use current value
+                        let current_graf = self.grafp[p];
+                        // Store for next even scanline
+                        if vdelay_enabled && !is_even_scanline {
+                            self.grafp_delayed[p] = current_graf;
+                        }
+                        current_graf
                     }
-                    current_graf
                 };
 
                 // Expand graphics pattern using lookup table
@@ -357,21 +364,27 @@ impl Gtia {
 
         // Render missiles (if enabled)
         if missiles_enabled {
-            // Check if missiles have VDELAY enabled (bits 4-7 of VDELAY)
-            let missile_vdelay = self.vdelay >> 4;
-
             // Determine which missile graphics to use
-            let grafm = if missile_vdelay != 0 && is_even_scanline {
-                // Even scanline with VDELAY: use delayed value
-                self.grafm_delayed
+            let grafm = if let Some(dma_data) = pm_dma_data {
+                // Use PM DMA data from ANTIC (DMA mode takes precedence)
+                dma_data[0]
             } else {
-                // Odd scanline or no VDELAY: use current value
-                let current_grafm = self.grafm;
-                // Store for next even scanline
-                if missile_vdelay != 0 && !is_even_scanline {
-                    self.grafm_delayed = current_grafm;
+                // Use GRAFM register (register mode)
+                // Check if missiles have VDELAY enabled (bits 4-7 of VDELAY)
+                let missile_vdelay = self.vdelay >> 4;
+
+                if missile_vdelay != 0 && is_even_scanline {
+                    // Even scanline with VDELAY: use delayed value
+                    self.grafm_delayed
+                } else {
+                    // Odd scanline or no VDELAY: use current value
+                    let current_grafm = self.grafm;
+                    // Store for next even scanline
+                    if missile_vdelay != 0 && !is_even_scanline {
+                        self.grafm_delayed = current_grafm;
+                    }
+                    current_grafm
                 }
-                current_grafm
             };
 
             for m in 0..4 {
@@ -408,11 +421,12 @@ impl Gtia {
     /// Colorize an ANTIC scanline and write to framebuffer
     /// Called once per scanline during frame rendering
     /// antic_mode: current ANTIC display mode (needed for GTIA mode 9/10/11 detection)
-    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8) {
+    /// pm_dma_data: optional PM data from ANTIC DMA (if None, uses GRAFP/GRAFM registers)
+    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8, pm_dma_data: Option<&[u8; 5]>) {
         let gtia_mode = (self.prior >> 6) & 0x03;
 
         // Generate PM graphics for this scanline
-        self.generate_pm_scanline(scanline_y);
+        self.generate_pm_scanline(scanline_y, pm_dma_data);
 
         // GTIA modes 9/10/11: reinterpret ANTIC mode F data
         if gtia_mode != 0 && antic_mode == 0x0F {

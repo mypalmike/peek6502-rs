@@ -48,6 +48,10 @@ pub struct Antic {
 
     // Scanline buffer (pixels to be displayed)
     pub scanline_buffer: [u8; 384],  // Color indices for current scanline
+
+    // Player/Missile DMA data (fetched from memory each scanline)
+    // [Missiles, P0, P1, P2, P3] - one byte per PM object per scanline
+    pub pm_data: [u8; 5],
 }
 
 impl Antic {
@@ -79,6 +83,7 @@ impl Antic {
             nmi_asserted: false,
             cycle_accumulator: 0,
             scanline_buffer: [0; 384],
+            pm_data: [0; 5],
         }
     }
 
@@ -170,9 +175,69 @@ impl Antic {
         (self.nmien & 0x40) != 0
     }
 
+    /// Set scanline for testing purposes
+    /// This is a test-only method to allow tests to set a specific scanline
+    pub fn set_scanline_for_test(&mut self, scanline: u16) {
+        self.scanline = scanline;
+    }
+
     fn update_dlist_ptr(&mut self) {
         self.dlist_ptr = (self.dlistl as u16) | ((self.dlisth as u16) << 8);
         self.dlist_index = self.dlist_ptr;  // Reset to start of display list
+    }
+
+    /// Fetch PM graphics data from memory for the current scanline
+    /// This is called once per scanline during PM DMA
+    pub fn fetch_pm_data(&mut self, mem: &Mem) {
+        // Clear PM data
+        self.pm_data = [0; 5];
+
+        // Check if PM DMA is enabled in DMACTL
+        let missile_dma_enabled = (self.dmactl & 0x08) != 0;  // Bit 3
+        let player_dma_enabled = (self.dmactl & 0x04) != 0;   // Bit 2
+        let double_line_mode = (self.dmactl & 0x10) != 0;     // Bit 4
+
+        if !missile_dma_enabled && !player_dma_enabled {
+            return;  // No PM DMA enabled
+        }
+
+        // Calculate base address from PMBASE
+        let pm_base = (self.pmbase as u16) << 8;
+
+        // Calculate scanline offset
+        let scanline_offset = if double_line_mode {
+            // Double-line resolution: each byte used for 2 scanlines
+            (self.scanline / 2) as u16
+        } else {
+            // Single-line resolution: one byte per scanline
+            self.scanline as u16
+        };
+
+        // Fetch missile data if enabled
+        if missile_dma_enabled {
+            let missile_offset = if double_line_mode {
+                0x180  // Double-line mode offset
+            } else {
+                0x300  // Single-line mode offset
+            };
+            let missile_addr = pm_base + missile_offset + scanline_offset;
+            self.pm_data[0] = mem.get_byte(missile_addr);
+        }
+
+        // Fetch player data if enabled
+        if player_dma_enabled {
+            for p in 0..4 {
+                let player_offset = if double_line_mode {
+                    // Double-line: P0=$200, P1=$280, P2=$300, P3=$380
+                    0x200 + (p * 0x80)
+                } else {
+                    // Single-line: P0=$400, P1=$500, P2=$600, P3=$700
+                    0x400 + (p * 0x100)
+                };
+                let player_addr = pm_base + player_offset + scanline_offset;
+                self.pm_data[1 + p as usize] = mem.get_byte(player_addr);
+            }
+        }
     }
 
     /// Reset display list processing state for the start of a new frame.
