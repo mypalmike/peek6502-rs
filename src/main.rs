@@ -187,7 +187,6 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
 
     // Event loop
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut frame_count: u32 = 0;
 
     'running: loop {
         // Get current keyboard modifier state before processing events
@@ -278,16 +277,6 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
                 // We're running behind, skip sleep but don't fall too far behind
                 next_frame_time = now;
             }
-        }
-
-        frame_count += 1;
-
-        // Debug: Show PC for first few frames to see what's happening
-        if frame_count <= 10 || (frame_count % 60 == 0 && frame_count <= 300) {
-            let pc = atari800.get_pc();
-            let in_rom = atari800.is_executing_from_rom();
-            eprintln!("Frame {}: PC=${:04X} ({})",
-                frame_count, pc, if in_rom { "ROM" } else { "RAM" });
         }
     }
 

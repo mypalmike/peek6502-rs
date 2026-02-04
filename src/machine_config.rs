@@ -78,7 +78,7 @@ impl MachineConfig {
             os_rom_size: 16 * 1024,  // 16KB
             basic_rom_path,
             basic_rom_size: 8 * 1024,  // 8KB
-            banking_scheme: BankingScheme::AtariXL,
+            banking_scheme: BankingScheme::None,  // No RAM banking on 800XL
         }
     }
 

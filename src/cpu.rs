@@ -44,6 +44,7 @@ pub struct Cpu {
     nmi_pending: bool,              // Latched NMI waiting to be serviced
 }
 
+#[allow(dead_code)]
 impl Cpu {
     pub fn new() -> Cpu {
         let mut new_cpu = Cpu {
@@ -388,7 +389,7 @@ impl Cpu {
         // 5-6. Read NMI vector from $FFFA/$FFFB
         // 7. Jump to handler
 
-        let old_pc = self.pc;
+        let _old_pc = self.pc;
 
         // Push PC (high byte first)
         self.stack_push_byte(bus, (self.pc >> 8) as u8);
@@ -440,9 +441,9 @@ impl Cpu {
     /// Print trace output for debugging (shows PC, registers, and key zero-page vectors)
     fn print_trace(&self, bus: &mut dyn Bus) {
         // Read key zero-page locations (OS vectors)
-        let vec_0200 = bus.read_word(0x0200);  // Immediate VBI vector
-        let vec_0216 = bus.read_word(0x0216);  // Main loop vector
-        let vec_0222 = bus.read_word(0x0222);  // Deferred VBI vector
+        let _vec_0200 = bus.read_word(0x0200);  // Immediate VBI vector
+        let _vec_0216 = bus.read_word(0x0216);  // Main loop vector
+        let _vec_0222 = bus.read_word(0x0222);  // Deferred VBI vector
 
         // Read next opcode to help with control flow analysis
         let opcode = bus.read(self.pc);
@@ -450,7 +451,7 @@ impl Cpu {
         let operand2 = bus.read(self.pc.wrapping_add(2));
 
         // Identify key control flow instructions
-        let opcode_desc = match opcode {
+        let _opcode_desc = match opcode {
             0x20 => format!("JSR ${:02X}{:02X}", operand2, operand1),
             0x4C => format!("JMP ${:02X}{:02X}", operand2, operand1),
             0x6C => format!("JMP (${:02X}{:02X})", operand2, operand1),
@@ -535,7 +536,7 @@ impl Cpu {
         (self.pc & 0xFF00) != (target & 0xFF00)
     }
 
-    pub fn unimpl(&mut self, bus: &mut dyn Bus) {
+    pub fn unimpl(&mut self, _bus: &mut dyn Bus) {
         panic!("Unimplemented instruction");
     }
 
@@ -673,7 +674,7 @@ impl Cpu {
     }
 
     // 0x02, unofficial
-    fn op_hlt(&mut self, bus: &mut dyn Bus) {
+    fn op_hlt(&mut self, _bus: &mut dyn Bus) {
         panic!("cpu halt");
     }
 
@@ -688,7 +689,7 @@ impl Cpu {
     }
 
     // 0x04, time 3, unofficial
-    fn op_nop_zp(&mut self, bus: &mut dyn Bus) {
+    fn op_nop_zp(&mut self, _bus: &mut dyn Bus) {
         self.pc += 1;
     }
 
@@ -742,7 +743,7 @@ impl Cpu {
     }
 
     // 0x0c, time 4, unofficial
-    fn op_nop_abs(&mut self, bus: &mut dyn Bus) {
+    fn op_nop_abs(&mut self, _bus: &mut dyn Bus) {
         self.pc += 2;
     }
 
@@ -808,7 +809,7 @@ impl Cpu {
     }
 
     // 0x14, time 4, unofficial
-    fn op_nop_zpx(&mut self, bus: &mut dyn Bus) {
+    fn op_nop_zpx(&mut self, _bus: &mut dyn Bus) {
         self.pc += 1;
     }
 
@@ -835,7 +836,7 @@ impl Cpu {
     }
 
     // 0x18, time 2
-    fn op_clc(&mut self, bus: &mut dyn Bus) {
+    fn op_clc(&mut self, _bus: &mut dyn Bus) {
         self.c = false;
     }
 
@@ -850,7 +851,7 @@ impl Cpu {
     }
 
     // 0x1a, time 2, unofficial
-    fn op_nop(&mut self, bus: &mut dyn Bus) {
+    fn op_nop(&mut self, _bus: &mut dyn Bus) {
     }
 
     // 0x1b, time 7, unofficial
@@ -1065,7 +1066,7 @@ impl Cpu {
     }
 
     // 0x38, time 2
-    fn op_sec(&mut self, bus: &mut dyn Bus) {
+    fn op_sec(&mut self, _bus: &mut dyn Bus) {
         self.c = true;
     }
 
@@ -1288,7 +1289,7 @@ impl Cpu {
     }
 
     // 0x58, time 2
-    fn op_cli(&mut self, bus: &mut dyn Bus) {
+    fn op_cli(&mut self, _bus: &mut dyn Bus) {
         self.i = false;
     }
 
@@ -1512,7 +1513,7 @@ impl Cpu {
     }
 
     // 0x78, time 2
-    fn op_sei(&mut self, bus: &mut dyn Bus) {
+    fn op_sei(&mut self, _bus: &mut dyn Bus) {
         self.i = true;
     }
 
@@ -1566,7 +1567,7 @@ impl Cpu {
     }
 
     // 0x80 nop_imm
-    fn op_nop_imm(&mut self, bus: &mut dyn Bus) {
+    fn op_nop_imm(&mut self, _bus: &mut dyn Bus) {
         self.pc += 1;
     }
 
@@ -1609,7 +1610,7 @@ impl Cpu {
     }
 
     // 0x88, time 2
-    fn op_dey(&mut self, bus: &mut dyn Bus) {
+    fn op_dey(&mut self, _bus: &mut dyn Bus) {
         self.y = self.y.wrapping_sub(1);
         self.compute_nz_val(self.y);
     }
@@ -1617,7 +1618,7 @@ impl Cpu {
     // 0x89 nop_imm
 
     // 0x8a, time 2
-    fn op_txa(&mut self, bus: &mut dyn Bus) {
+    fn op_txa(&mut self, _bus: &mut dyn Bus) {
         self.a = self.x;
         self.compute_nz_val(self.a);
     }
@@ -1713,7 +1714,7 @@ impl Cpu {
     }
 
     // 0x98, time 2
-    fn op_tya(&mut self, bus: &mut dyn Bus) {
+    fn op_tya(&mut self, _bus: &mut dyn Bus) {
         self.a = self.y;
         self.compute_nz_val(self.a);
     }
@@ -1726,7 +1727,7 @@ impl Cpu {
     }
 
     // 0x9a, time 2
-    fn op_txs(&mut self, bus: &mut dyn Bus) {
+    fn op_txs(&mut self, _bus: &mut dyn Bus) {
         self.s = self.x;
     }
 
@@ -1823,7 +1824,7 @@ impl Cpu {
     }
 
     // 0xa8, time 2
-    fn op_tay(&mut self, bus: &mut dyn Bus) {
+    fn op_tay(&mut self, _bus: &mut dyn Bus) {
         self.y = self.a;
         self.compute_nz_val(self.y);
     }
@@ -1835,7 +1836,7 @@ impl Cpu {
     }
 
     // 0xaa, time 2
-    fn op_tax(&mut self, bus: &mut dyn Bus) {
+    fn op_tax(&mut self, _bus: &mut dyn Bus) {
         self.x = self.a;
         self.compute_nz_val(self.x);
     }
@@ -1943,7 +1944,7 @@ impl Cpu {
     }
 
     // 0xb8, time 2
-    fn op_clv(&mut self, bus: &mut dyn Bus) {
+    fn op_clv(&mut self, _bus: &mut dyn Bus) {
         self.v = false;
     }
 
@@ -1958,7 +1959,7 @@ impl Cpu {
     }
 
     // 0xba, time 2
-    fn op_tsx(&mut self, bus: &mut dyn Bus) {
+    fn op_tsx(&mut self, _bus: &mut dyn Bus) {
         self.x = self.s;
         self.compute_nz_val(self.x);
     }
@@ -2069,7 +2070,7 @@ impl Cpu {
     }
 
     // 0xc8, time 2
-    fn op_iny(&mut self, bus: &mut dyn Bus) {
+    fn op_iny(&mut self, _bus: &mut dyn Bus) {
         self.y = self.y.wrapping_add(1);
         self.compute_nz_val(self.y);
     }
@@ -2081,7 +2082,7 @@ impl Cpu {
     }
 
     // 0xca, time 2
-    fn op_dex(&mut self, bus: &mut dyn Bus) {
+    fn op_dex(&mut self, _bus: &mut dyn Bus) {
         self.x = self.x.wrapping_sub(1);
         self.compute_nz_val(self.x);
     }
@@ -2183,7 +2184,7 @@ impl Cpu {
     }
 
     // 0xd8, time 2
-    fn op_cld(&mut self, bus: &mut dyn Bus) {
+    fn op_cld(&mut self, _bus: &mut dyn Bus) {
         self.d = false;
     }
 
@@ -2283,7 +2284,7 @@ impl Cpu {
     }
 
     // 0xe8, time 2
-    fn op_inx(&mut self, bus: &mut dyn Bus) {
+    fn op_inx(&mut self, _bus: &mut dyn Bus) {
         self.x = self.x.wrapping_add(1);
         self.compute_nz_val(self.x);
     }
@@ -2384,7 +2385,7 @@ impl Cpu {
     }
 
     // 0xf8, time 2
-    fn op_sed(&mut self, bus: &mut dyn Bus) {
+    fn op_sed(&mut self, _bus: &mut dyn Bus) {
         self.d = true;
     }
 
@@ -2445,15 +2446,15 @@ impl Cpu {
         }
     }
 
-    fn adc_bin(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn adc_bin(&mut self, _bus: &mut dyn Bus, val : u8) {
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
         let (mut u_sum, mut u_overflow) = self.a.overflowing_add(val);
-        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
+        let (s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
 
         if self.c {
             let(u_sumc, u_overflowc) = u_sum.overflowing_add(1);
-            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
+            let(_s_sumc, s_overflowc) = s_sum.overflowing_add(1);
 
             u_sum = u_sumc;
             u_overflow = u_overflow || u_overflowc;
@@ -2468,7 +2469,7 @@ impl Cpu {
         self.compute_nz();
     }
 
-    fn adc_dec(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn adc_dec(&mut self, _bus: &mut dyn Bus, val : u8) {
         let mut lo = (self.a & 0x0f) + (val & 0x0f);
         let mut hi = ((self.a & 0xf0) >> 4) + ((val & 0xf0) >> 4);
 
@@ -2496,16 +2497,16 @@ impl Cpu {
 
     fn adc_dec_compute_v(&mut self, val: u8) -> bool {
         // v is "undefined" but is reported to act as if in binary mode.
-        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
+        let (s_sum, mut s_overflow) = (self.a as i8).overflowing_add(val as i8);
         if self.c {
-            let(s_sumc, s_overflowc) = s_sum.overflowing_add(1);
+            let(_s_sumc, s_overflowc) = s_sum.overflowing_add(1);
             s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
         }
 
         s_overflow
     }
 
-    fn and(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn and(&mut self, _bus: &mut dyn Bus, val : u8) {
         self.a = self.a & val;
         self.compute_nz();
     }
@@ -2516,7 +2517,7 @@ impl Cpu {
         bus.write(addr, new_val);
     }
 
-    fn asl_val(&mut self, bus: &mut dyn Bus, val: u8) -> u8 {
+    fn asl_val(&mut self, _bus: &mut dyn Bus, val: u8) -> u8 {
         let carry = val >= 0x80;
         let new_val = val.wrapping_shl(1);
         self.c = carry;
@@ -2524,56 +2525,56 @@ impl Cpu {
         new_val
     }
 
-    fn bcs(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bcs(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if self.c {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bcc(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bcc(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if !self.c {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn beq(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn beq(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if self.z {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bmi(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bmi(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if self.n {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bne(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bne(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if !self.z {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bpl(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bpl(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if !self.n {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bvc(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bvc(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if !self.v {
             self.check_addr(addr);
             self.pc = addr;
         }
     }
 
-    fn bvs(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn bvs(&mut self, _bus: &mut dyn Bus, addr: u16) {
         if self.v {
             self.check_addr(addr);
             self.pc = addr;
@@ -2590,13 +2591,13 @@ impl Cpu {
     }
 
     //	Set flags only. n and v are set to val bits 7 and 6. z is AND of a and val
-    fn bit(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn bit(&mut self, _bus: &mut dyn Bus, val: u8) {
         self.n = val & 0x80 != 0;
         self.v = val & 0x40 != 0;
         self.z = val & self.a == 0;
     }
 
-    fn cmp(&mut self, bus: &mut dyn Bus, val1: u8, val2: u8) {
+    fn cmp(&mut self, _bus: &mut dyn Bus, val1: u8, val2: u8) {
         let (delta, overflow) = val1.overflowing_sub(val2);
         // This is unintuitive, but CMP is like SBC with an implied carry bit already set.
         self.c = !overflow;
@@ -2610,7 +2611,7 @@ impl Cpu {
         self.compute_nz_val(new_val);
     }
 
-    fn eor(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn eor(&mut self, _bus: &mut dyn Bus, val: u8) {
         self.a = self.a ^ val;
         self.compute_nz();
     }
@@ -2622,21 +2623,21 @@ impl Cpu {
         self.compute_nz_val(new_val);
     }
 
-    fn jmp(&mut self, bus: &mut dyn Bus, addr: u16) {
+    fn jmp(&mut self, _bus: &mut dyn Bus, addr: u16) {
         self.pc = addr;
     }
 
-    fn lda(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn lda(&mut self, _bus: &mut dyn Bus, val: u8) {
         self.a = val;
         self.compute_nz();
     }
 
-    fn ldx(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn ldx(&mut self, _bus: &mut dyn Bus, val: u8) {
         self.x = val;
         self.compute_nz_val(self.x);
     }
 
-    fn ldy(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn ldy(&mut self, _bus: &mut dyn Bus, val: u8) {
         self.y = val;
         self.compute_nz_val(self.y);
     }
@@ -2647,14 +2648,14 @@ impl Cpu {
         bus.write(addr, new_val);
     }
 
-    fn lsr_val(&mut self, bus: &mut dyn Bus, val: u8) -> u8 {
+    fn lsr_val(&mut self, _bus: &mut dyn Bus, val: u8) -> u8 {
         self.c = val & 0x01_u8 == 0x01u8;
         let new_val = val >> 1;
         self.compute_nz_val(new_val);
         new_val
     }
 
-    fn ora(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn ora(&mut self, _bus: &mut dyn Bus, val : u8) {
         self.a = self.a | val;
         self.compute_nz();
     }
@@ -2665,7 +2666,7 @@ impl Cpu {
         bus.write(addr, new_val);
     }
 
-    fn rol_val(&mut self, bus: &mut dyn Bus, val: u8) -> u8 {
+    fn rol_val(&mut self, _bus: &mut dyn Bus, val: u8) -> u8 {
         let carry = val >= 0x80;
         let val2 = val.wrapping_shl(1);
         let c = self.c;
@@ -2681,7 +2682,7 @@ impl Cpu {
         bus.write(addr, new_val);
     }
 
-    fn ror_val(&mut self, bus: &mut dyn Bus, val: u8) -> u8 {
+    fn ror_val(&mut self, _bus: &mut dyn Bus, val: u8) -> u8 {
         let new_c = val & 0x01 == 0x01;
         let val2 = val >> 1;
         let c = self.c;
@@ -2701,15 +2702,15 @@ impl Cpu {
         }
     }
 
-    fn sbc_bin(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn sbc_bin(&mut self, _bus: &mut dyn Bus, val : u8) {
         // Add numbers twice: once in signed, the other unsigned. This gets us
         // the v and c flags.
         let (mut u_sum, mut u_overflow) = self.a.overflowing_sub(val);
-        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
+        let (s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
 
         if !self.c {
             let(u_sumc, u_overflowc) = u_sum.overflowing_sub(1);
-            let(s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
+            let(_s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
 
             u_sum = u_sumc;
             u_overflow = u_overflow || u_overflowc;
@@ -2723,7 +2724,7 @@ impl Cpu {
         self.compute_nz();
     }
 
-    fn sbc_dec(&mut self, bus: &mut dyn Bus, val : u8) {
+    fn sbc_dec(&mut self, _bus: &mut dyn Bus, val : u8) {
         let mut lo = (self.a & 0x0f).wrapping_sub(val & 0x0f);
         let mut hi = ((self.a & 0xf0) >> 4).wrapping_sub((val & 0xf0) >> 4);
 
@@ -2750,9 +2751,9 @@ impl Cpu {
     }
 
     fn sbc_dec_compute_v(&self, val: u8) -> bool {
-        let (mut s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
+        let (s_sum, mut s_overflow) = (self.a as i8).overflowing_sub(val as i8);
         if !self.c {
-            let(s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
+            let(_s_sumc, s_overflowc) = s_sum.overflowing_sub(1);
             s_overflow = s_overflow != s_overflowc; // Carry bit can re-toggle overflow.
         }
 
@@ -2840,7 +2841,7 @@ impl Cpu {
 
         self.n = status & STATUS_NEG == STATUS_NEG;
         self.v = status & STATUS_OVR == STATUS_OVR;
-        if (affect_brk) {
+        if affect_brk  {
             self.b = status & STATUS_BRK == STATUS_BRK;
         }
         self.d = status & STATUS_DCM == STATUS_DCM;

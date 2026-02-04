@@ -151,7 +151,7 @@ impl Debugger {
             }
         } else {
             let mut input = String::new();
-            io::stdin().read_line(&mut input);
+            let _ = io::stdin().read_line(&mut input);
             let command: Vec<&str> = input.trim().split(' ').collect();
 
             if command[0] == "ss" {
@@ -171,7 +171,7 @@ impl Debugger {
                         self.breakpoints.insert(addr);
                         println!("Breakpoint added 0x{:04x}", addr);
                     },
-                    Err(e) => {}
+                    Err(_e) => {}
                 }
             }
             if command[0] == "m" {
@@ -182,7 +182,7 @@ impl Debugger {
                         let addr = hi | lo;
                         addr
                     },
-                    Err(e) => {0_u16}
+                    Err(_e) => {0_u16}
                 };
 
                 println!("{:04x}: {:02x} {:02x} {:02x} {:02x}",

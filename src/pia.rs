@@ -30,11 +30,11 @@ impl Pia {
             porta: 0xFF,
             ddra: 0,
             pactl: 0,           // Bit 2 = 0: $D300 accesses DDRA initially
-            portb: 0x00,        // PORTB starts with ROMs enabled (bits 0-1 low for 800XL)
+            portb: 0x00,        // PORTB will be set by machine-specific initialization
             ddrb: 0,
             pbctl: 0,           // Bit 2 = 0: $D302 accesses DDRB initially
             porta_input: 0xFF,  // No joystick input (active low)
-            portb_input: 0xFC,  // PORTB bits 0-1 pulled low by hardware (ROMs enabled on 800XL)
+            portb_input: 0xFF,  // No console keys pressed (active low), no special boot mode
         }
     }
 
@@ -124,5 +124,15 @@ impl Pia {
     /// Check if PIA is asserting the NMI line
     pub fn is_nmi_asserted(&self) -> bool {
         false
+    }
+
+    /// Get the actual PORTB data register value (for banking control)
+    pub fn get_portb(&self) -> u8 {
+        self.portb
+    }
+
+    /// Set PORTB data register (for machine-specific initialization)
+    pub fn set_portb(&mut self, value: u8) {
+        self.portb = value;
     }
 }

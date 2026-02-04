@@ -10,6 +10,7 @@ use crate::joystick::{JoystickInput, KeyboardJoystick};
 use crate::memory_map::MemoryMap;
 use crate::memory_region::{MemoryRegionType, RamRegion, RomRegion, IoRegion, ChipType};
 use crate::banking::{BankController, BankingScheme};
+use crate::rom_overlay::RomOverlayController;
 use crate::machine_config::{MachineConfig, MachineType};
 use crate::rom_scanner::RomDatabase;
 
@@ -19,7 +20,8 @@ pub struct Atari800 {
 
     // NEW: Memory architecture
     memory_map: MemoryMap,
-    bank_controller: BankController,
+    bank_controller: BankController,  // For 130XE RAM banking
+    rom_overlay: RomOverlayController,  // For 800XL/130XE ROM overlays
     config: MachineConfig,
 
     // Custom chips
@@ -69,8 +71,9 @@ impl Atari800 {
             0,
         )));
 
-        // No banking needed for tests
+        // No banking or ROM overlays needed for tests
         let bank_controller = BankController::new(BankingScheme::None);
+        let rom_overlay = RomOverlayController::new();
 
         // Minimal config
         let config = MachineConfig {
@@ -88,6 +91,7 @@ impl Atari800 {
             cpu: Cpu::new(),
             memory_map,
             bank_controller,
+            rom_overlay,
             config,
             antic: Antic::new(),
             gtia: Gtia::new(),
@@ -167,9 +171,15 @@ impl Atari800 {
         let mut memory_map = MemoryMap::new();
 
         // 1. Add RAM (entire address space up to ram_size, lowest priority)
+        // Handle 64KB case: ram_size can be 65536, but u16 max is 65535
+        let ram_end = if config.ram_size >= 65536 {
+            0xFFFF
+        } else {
+            (config.ram_size - 1) as u16
+        };
         memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
             0x0000,
-            (config.ram_size as u16).saturating_sub(1).min(0xFFFF),
+            ram_end,
             0,  // Lowest priority
         )));
 
@@ -213,28 +223,62 @@ impl Atari800 {
             vec![0xFF; config.os_rom_size]
         };
 
-        // 4. Set up banking if needed
-        let mut bank_controller = BankController::new(config.banking_scheme);
+        // 4. Set up banking and ROM overlays
+        let bank_controller = BankController::new(config.banking_scheme);  // For 130XE extended RAM
+        let mut rom_overlay = RomOverlayController::new();
 
-        // For banked systems (800XL), ROM goes into bank controller
-        // For non-banked systems (800), ROM goes into memory map
-        if let Some(ref basic_path) = config.basic_rom_path {
-            let basic_data = std::fs::read(basic_path)
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: Could not load BASIC ROM '{}': {}", basic_path, e);
-                    eprintln!("Using empty ROM (BASIC will not work)");
-                    vec![0xFF; config.basic_rom_size]
-                });
-            bank_controller.add_basic_rom(basic_data);
-            bank_controller.add_os_rom_banking(os_rom_data);
-            // Don't add OS ROM to memory_map - it's handled by banking
-        } else {
-            // No banking - add OS ROM directly to memory map
-            memory_map.add_region(MemoryRegionType::Rom(RomRegion::new(
-                config.os_rom_start,
-                os_rom_data,
-                50,
-            )));
+        // Atari 800: Fixed OS ROM in memory map (no overlays)
+        // Atari 800XL/130XE: ROM overlays controlled by PORTB
+        match config.machine_type {
+            MachineType::Atari800 => {
+                // Add OS ROM as fixed ROM region (not an overlay)
+                memory_map.add_region(MemoryRegionType::Rom(RomRegion::new(
+                    config.os_rom_start,
+                    os_rom_data.clone(),
+                    50,  // Higher priority than RAM, lower than I/O
+                )));
+            }
+            MachineType::Atari800XL => {
+                // 800XL OS ROM is 16KB but split into 3 sections:
+                // - $0000-$0FFF (4KB) in file → $C000-$CFFF in memory (OS code)
+                // - $1000-$1FFF (4KB) in file → $5000-$57FF in memory (self-test, via PORTB bit 7)
+                // - $2000-$2FFF (8KB) in file → $D800-$FFFF in memory (OS code)
+                // The middle section ($D000-$D7FF) is masked by I/O registers
+
+                if os_rom_data.len() >= 0x4000 {
+                    // 800XL OS ROM is 16KB with this layout in the file:
+                    // $0000-$0FFF (4KB): OS code for $C000-$CFFF
+                    // $1000-$17FF (2KB): Self-test code for $5000-$57FF (normally at $D000-$D7FF)
+                    // $1800-$3FFF (10KB): OS code for $D800-$FFFF
+                    let os_low = os_rom_data[0x0000..0x1000].to_vec();   // 4KB → $C000-$CFFF
+                    let selftest = os_rom_data[0x1000..0x1800].to_vec(); // 2KB → $5000-$57FF
+                    let os_high = os_rom_data[0x1800..0x4000].to_vec();  // 10KB → $D800-$FFFF
+
+                    // Combine low and high for OS ROM overlay
+                    let mut os_combined = os_low.clone();
+                    os_combined.extend_from_slice(&vec![0xFF; 0x800]); // Pad $D000-$D7FF (I/O hole)
+                    os_combined.extend_from_slice(&os_high);
+
+                    eprintln!("[800XL] Loaded OS ROM: low={}KB, selftest={}KB, high={}KB",
+                        os_low.len() / 1024, selftest.len() / 1024, os_high.len() / 1024);
+
+                    rom_overlay.set_os_rom(os_combined);
+                    rom_overlay.set_selftest_rom(selftest);
+                } else {
+                    eprintln!("Warning: 800XL OS ROM too small ({} bytes, expected 16KB)", os_rom_data.len());
+                    rom_overlay.set_os_rom(os_rom_data.clone());
+                }
+
+                if let Some(ref basic_path) = config.basic_rom_path {
+                    let basic_data = std::fs::read(basic_path)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Warning: Could not load BASIC ROM '{}': {}", basic_path, e);
+                            eprintln!("Using empty ROM (BASIC will not work)");
+                            vec![0xFF; config.basic_rom_size]
+                        });
+                    rom_overlay.set_basic_rom(basic_data);
+                }
+            }
         }
 
         // Create system
@@ -242,6 +286,7 @@ impl Atari800 {
             cpu: Cpu::new(),
             memory_map,
             bank_controller,
+            rom_overlay,
             config,
             antic: Antic::new(),
             gtia: Gtia::new(),
@@ -256,6 +301,20 @@ impl Atari800 {
             cart_rom,
             cart_base,
         };
+
+        // Set PORTB based on machine type
+        // 800: PORTB controls joysticks (should be $FF for no input)
+        // 800XL: PORTB controls ROM overlays (should be $FD for OS=on, BASIC=off, self-test=off)
+        match atari800.config.machine_type {
+            MachineType::Atari800 => {
+                atari800.pia.set_portb(0xFF);  // No joystick input (active low)
+            }
+            MachineType::Atari800XL => {
+                // Simulate OPTION held down during boot (BASIC disabled)
+                atari800.pia.set_portb(0xFF);  // OS ROM on, BASIC disabled
+                atari800.rom_overlay.update_portb(0xFF);  // Initialize ROM overlay state
+            }
+        }
 
         // Reset CPU after construction to load PC from reset vector
         // Use mem::replace to temporarily take ownership of CPU
@@ -693,7 +752,13 @@ impl Atari800 {
         self.gtia.set_trigger(0, joy1.trigger_value());
         self.gtia.set_trigger(1, joy2.trigger_value());
         self.gtia.set_trigger(2, joy3.trigger_value());
-        self.gtia.set_trigger(3, joy4.trigger_value());
+
+        // IMPORTANT: On 800XL, TRIG3 is connected to cartridge RD5 line (not joystick 4)
+        // Only update TRIG3 for joystick 4 on Atari 800
+        if matches!(self.config.machine_type, MachineType::Atari800) {
+            self.gtia.set_trigger(3, joy4.trigger_value());
+        }
+        // On 800XL, TRIG3 remains 0 (no cartridge) or 1 (cartridge present) from init
     }
 
     /// Advance ANTIC scanline counter (for simulating video timing in instruction-level mode)
@@ -756,7 +821,9 @@ impl Bus for Atari800 {
                     let val = match io_region.chip_type {
                         ChipType::Gtia => self.gtia.read_register(addr),
                         ChipType::Pokey => self.pokey.read_register(addr),
-                        ChipType::Pia => self.pia.read_register(addr),
+                        ChipType::Pia => {
+                            self.pia.read_register(addr)
+                        }
                         ChipType::Antic => self.antic.read_register(addr),
                     };
                     return val;
@@ -767,12 +834,17 @@ impl Bus for Atari800 {
             }
         }
 
-        // 3. Banked regions (XL OS/BASIC ROM banking)
+        // 3. ROM overlays (800XL/130XE PORTB-controlled ROM overlays)
+        if let Some(value) = self.rom_overlay.read(addr) {
+            return value;
+        }
+
+        // 4. Banked RAM (130XE extended memory)
         if let Some(value) = self.bank_controller.read(addr) {
             return value;
         }
 
-        // 4. Memory map (RAM/ROM)
+        // 5. Memory map (base RAM)
         self.memory_map.read(addr).unwrap_or(0xFF)
     }
 
@@ -803,10 +875,12 @@ impl Bus for Atari800 {
                         }
                         ChipType::Pia => {
                             self.pia.write_register(addr, val);
-                            // PORTB ($D301) controls banking on XL
+                            // PORTB ($D301) controls ROM overlays on 800XL/130XE
+                            // Read the actual PORTB data register value, not the PIA register
+                            // (which might be DDRB if PBCTL bit 2 is clear)
                             if (addr & 0x03) == 0x01 {
-                                let portb = self.pia.read_register(0xD301);
-                                self.bank_controller.update_portb(portb);
+                                let portb = self.pia.get_portb();
+                                self.rom_overlay.update_portb(portb);
                             }
                         }
                         ChipType::Antic => {
@@ -821,12 +895,18 @@ impl Bus for Atari800 {
             }
         }
 
-        // 3. Banked regions
+        // 3. ROM overlay write blocking
+        // If ROM is overlaid at this address, ignore write (ROM is read-only)
+        if self.rom_overlay.is_write_blocked(addr) {
+            return;  // Write ignored
+        }
+
+        // 4. Banked RAM (130XE)
         if self.bank_controller.write(addr, val) {
             return;
         }
 
-        // 4. Memory map (RAM/ROM)
+        // 5. Memory map (base RAM)
         self.memory_map.write(addr, val);
     }
 

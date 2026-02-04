@@ -13,6 +13,7 @@ pub mod input;
 pub mod joystick;
 pub mod memory_region;
 pub mod memory_map;
-pub mod banking;
+pub mod banking;  // RAM banking for 130XE extended memory
+pub mod rom_overlay;  // ROM overlays for 800XL/130XE
 pub mod machine_config;
 pub mod rom_scanner;
