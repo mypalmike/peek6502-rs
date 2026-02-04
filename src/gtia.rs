@@ -24,22 +24,38 @@ pub struct Gtia {
     pub consol_input: u8,   // $D01F - Console button state (read: physical buttons)
 
     // Collision detection (read-only)
-    m0pf: u8,           // $D000 - Missile 0 to playfield
-    m1pf: u8,           // $D001 - Missile 1 to playfield
-    m2pf: u8,           // $D002 - Missile 2 to playfield
-    m3pf: u8,           // $D003 - Missile 3 to playfield
-    p0pf: u8,           // $D004 - Player 0 to playfield
-    p1pf: u8,           // $D005 - Player 1 to playfield
-    p2pf: u8,           // $D006 - Player 2 to playfield
-    p3pf: u8,           // $D007 - Player 3 to playfield
-    m0pl: u8,           // $D008 - Missile 0 to player
-    m1pl: u8,           // $D009 - Missile 1 to player
-    m2pl: u8,           // $D00A - Missile 2 to player
-    m3pl: u8,           // $D00B - Missile 3 to player
-    p0pl: u8,           // $D00C - Player 0 to player
-    p1pl: u8,           // $D00D - Player 1 to player
-    p2pl: u8,           // $D00E - Player 2 to player
-    p3pl: u8,           // $D00F - Player 3 to player
+    m0pf: u8,           // $D000 - Missile 0 to playfield (read)
+    m1pf: u8,           // $D001 - Missile 1 to playfield (read)
+    m2pf: u8,           // $D002 - Missile 2 to playfield (read)
+    m3pf: u8,           // $D003 - Missile 3 to playfield (read)
+    p0pf: u8,           // $D004 - Player 0 to playfield (read)
+    p1pf: u8,           // $D005 - Player 1 to playfield (read)
+    p2pf: u8,           // $D006 - Player 2 to playfield (read)
+    p3pf: u8,           // $D007 - Player 3 to playfield (read)
+    m0pl: u8,           // $D008 - Missile 0 to player (read)
+    m1pl: u8,           // $D009 - Missile 1 to player (read)
+    m2pl: u8,           // $D00A - Missile 2 to player (read)
+    m3pl: u8,           // $D00B - Missile 3 to player (read)
+    p0pl: u8,           // $D00C - Player 0 to player (read)
+    p1pl: u8,           // $D00D - Player 1 to player (read)
+    p2pl: u8,           // $D00E - Player 2 to player (read)
+    p3pl: u8,           // $D00F - Player 3 to player (read)
+
+    // Player/Missile position registers (write - same addresses as collision reads)
+    hposp: [u8; 4],     // $D000-$D003 write - Player horizontal positions
+    hposm: [u8; 4],     // $D004-$D007 write - Missile horizontal positions
+
+    // Player/Missile size registers (write - same addresses as collision reads)
+    sizep: [u8; 4],     // $D008-$D00B write - Player sizes (0/2=1x, 1=2x, 3=4x)
+    sizem: u8,          // $D00C write - Missile sizes (2 bits per missile)
+
+    // Player/Missile graphics registers (write)
+    grafp: [u8; 4],     // $D00D-$D010 write - Player graphics patterns
+    grafm: u8,          // $D011 write - Missile graphics (2 bits per missile)
+
+    // Vertical delay support
+    grafp_delayed: [u8; 4],  // Previous scanline's GRAFP values
+    grafm_delayed: u8,       // Previous scanline's GRAFM value
 
     // Paddle/joystick triggers (read-only)
     trig: [u8; 4],      // $D010-$D013
@@ -48,13 +64,21 @@ pub struct Gtia {
     pixel_x: u16,
     pixel_y: u16,
 
+    // PM scanline buffer (rendered PM objects, one byte per pixel)
+    // Bit 0-3 = M0-M3, Bit 4-7 = P0-P3
+    pm_scanline: [u8; 384],
+
+    // Width expansion lookup tables (pre-computed for fast rendering)
+    // [size_mode][byte_value] -> 32-bit expanded pattern
+    grafp_lookup: [[u32; 256]; 4],
+
     // Framebuffer - GTIA owns the final pixel output
     pub framebuffer: Framebuffer,
 }
 
 impl Gtia {
     pub fn new() -> Gtia {
-        Gtia {
+        let mut gtia = Gtia {
             colpm: [0; 4],
             colpf: [0; 4],
             colbk: 0,
@@ -80,10 +104,58 @@ impl Gtia {
             p1pl: 0,
             p2pl: 0,
             p3pl: 0,
+            hposp: [0; 4],
+            hposm: [0; 4],
+            sizep: [0; 4],
+            sizem: 0,
+            grafp: [0; 4],
+            grafm: 0,
+            grafp_delayed: [0; 4],
+            grafm_delayed: 0,
             trig: [1, 1, 1, 0],   // TRIG0-2: 1 (not pressed), TRIG3: 0 (no cartridge present)
             pixel_x: 0,
             pixel_y: 0,
+            pm_scanline: [0; 384],
+            grafp_lookup: [[0; 256]; 4],
             framebuffer: Framebuffer::new(384, 240),  // 384x240 NTSC visible area
+        };
+
+        // Pre-compute width expansion lookup tables
+        gtia.init_grafp_lookup();
+
+        gtia
+    }
+
+    /// Initialize width expansion lookup tables for all size modes
+    fn init_grafp_lookup(&mut self) {
+        for byte_val in 0..=255 {
+            // Size 0/2 (1x): 8 bits → 8 bits (each bit stays 1 bit)
+            let mut expanded_1x = 0u32;
+            for bit in 0..8 {
+                if (byte_val & (1 << (7 - bit))) != 0 {
+                    expanded_1x |= 1 << (7 - bit);
+                }
+            }
+            self.grafp_lookup[0][byte_val] = expanded_1x;
+            self.grafp_lookup[2][byte_val] = expanded_1x;
+
+            // Size 1 (2x): 8 bits → 16 bits (each bit becomes 2 bits)
+            let mut expanded_2x = 0u32;
+            for bit in 0..8 {
+                if (byte_val & (1 << (7 - bit))) != 0 {
+                    expanded_2x |= 0b11 << ((7 - bit) * 2);
+                }
+            }
+            self.grafp_lookup[1][byte_val] = expanded_2x;
+
+            // Size 3 (4x): 8 bits → 32 bits (each bit becomes 4 bits)
+            let mut expanded_4x = 0u32;
+            for bit in 0..8 {
+                if (byte_val & (1 << (7 - bit))) != 0 {
+                    expanded_4x |= 0b1111 << ((7 - bit) * 4);
+                }
+            }
+            self.grafp_lookup[3][byte_val] = expanded_4x;
         }
     }
 
@@ -141,6 +213,30 @@ impl Gtia {
     /// Write to a GTIA register
     pub fn write_register(&mut self, addr: u16, val: u8) {
         match addr & 0x1F {
+            // $D000-$D003: Player horizontal positions (write) / Missile-to-playfield collision (read)
+            0x00 => self.hposp[0] = val,
+            0x01 => self.hposp[1] = val,
+            0x02 => self.hposp[2] = val,
+            0x03 => self.hposp[3] = val,
+            // $D004-$D007: Missile horizontal positions (write) / Player-to-playfield collision (read)
+            0x04 => self.hposm[0] = val,
+            0x05 => self.hposm[1] = val,
+            0x06 => self.hposm[2] = val,
+            0x07 => self.hposm[3] = val,
+            // $D008-$D00B: Player sizes (write) / Missile-to-player collision (read)
+            0x08 => self.sizep[0] = val,
+            0x09 => self.sizep[1] = val,
+            0x0A => self.sizep[2] = val,
+            0x0B => self.sizep[3] = val,
+            // $D00C: Missile sizes (write) / Player-to-player collision (read)
+            0x0C => self.sizem = val,
+            // $D00D-$D010: Player graphics patterns (write) / Player-to-player collision (read)
+            0x0D => self.grafp[0] = val,
+            0x0E => self.grafp[1] = val,
+            0x0F => self.grafp[2] = val,
+            0x10 => self.grafp[3] = val,
+            // $D011: Missile graphics (write)
+            0x11 => self.grafm = val,
             // Player/Missile colors
             0x12 => self.colpm[0] = val,
             0x13 => self.colpm[1] = val,
@@ -202,11 +298,121 @@ impl Gtia {
         self.framebuffer.clear();
     }
 
+    /// Generate PM graphics for the current scanline
+    /// Fills pm_scanline buffer with PM object bits
+    /// scanline_y: current scanline number (used for VDELAY)
+    fn generate_pm_scanline(&mut self, scanline_y: usize) {
+        // Clear PM scanline buffer
+        self.pm_scanline = [0; 384];
+
+        // Check if PM graphics are enabled
+        let players_enabled = (self.gractl & 0b10) != 0;
+        let missiles_enabled = (self.gractl & 0b01) != 0;
+
+        let is_even_scanline = (scanline_y & 1) == 0;
+
+        // Render players (if enabled)
+        if players_enabled {
+            for p in 0..4 {
+                let hpos = self.hposp[p] as usize;
+                let size_mode = (self.sizep[p] & 0x03) as usize;
+
+                // Check if this player has VDELAY enabled
+                let vdelay_enabled = (self.vdelay & (1 << p)) != 0;
+
+                // Determine which graphics to use
+                let graf = if vdelay_enabled && is_even_scanline {
+                    // Even scanline with VDELAY: use delayed (previous) value
+                    self.grafp_delayed[p]
+                } else {
+                    // Odd scanline or no VDELAY: use current value
+                    let current_graf = self.grafp[p];
+                    // Store for next even scanline
+                    if vdelay_enabled && !is_even_scanline {
+                        self.grafp_delayed[p] = current_graf;
+                    }
+                    current_graf
+                };
+
+                // Expand graphics pattern using lookup table
+                let expanded = self.grafp_lookup[size_mode][graf as usize];
+
+                // Determine width based on size mode
+                let width = match size_mode {
+                    0 | 2 => 8,   // 1x width
+                    1 => 16,      // 2x width
+                    3 => 32,      // 4x width
+                    _ => 8,
+                };
+
+                // Place expanded bits in scanline buffer
+                for bit in 0..width {
+                    let x = hpos + bit;
+                    if x < 384 && ((expanded >> (width - 1 - bit)) & 1) != 0 {
+                        self.pm_scanline[x] |= 1 << (4 + p);  // Set player bit (P0-P3 = bits 4-7)
+                    }
+                }
+            }
+        }
+
+        // Render missiles (if enabled)
+        if missiles_enabled {
+            // Check if missiles have VDELAY enabled (bits 4-7 of VDELAY)
+            let missile_vdelay = self.vdelay >> 4;
+
+            // Determine which missile graphics to use
+            let grafm = if missile_vdelay != 0 && is_even_scanline {
+                // Even scanline with VDELAY: use delayed value
+                self.grafm_delayed
+            } else {
+                // Odd scanline or no VDELAY: use current value
+                let current_grafm = self.grafm;
+                // Store for next even scanline
+                if missile_vdelay != 0 && !is_even_scanline {
+                    self.grafm_delayed = current_grafm;
+                }
+                current_grafm
+            };
+
+            for m in 0..4 {
+                let hpos = self.hposm[m] as usize;
+                let size_bits = (self.sizem >> (m * 2)) & 0x03;
+
+                // Extract 2-bit missile pattern from GRAFM
+                let graf_bits = (grafm >> (m * 2)) & 0x03;
+
+                // Determine width based on size
+                let width = match size_bits {
+                    0 | 2 => 2,   // 1x width (2 pixels)
+                    1 => 4,       // 2x width (4 pixels)
+                    3 => 8,       // 4x width (8 pixels)
+                    _ => 2,
+                };
+
+                // Expand the 2-bit pattern across the width
+                for bit in 0..2 {
+                    if ((graf_bits >> (1 - bit)) & 1) != 0 {
+                        let pixel_width = width / 2;
+                        for dx in 0..pixel_width {
+                            let x = hpos + bit * pixel_width + dx;
+                            if x < 384 {
+                                self.pm_scanline[x] |= 1 << m;  // Set missile bit (M0-M3 = bits 0-3)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Colorize an ANTIC scanline and write to framebuffer
     /// Called once per scanline during frame rendering
     /// antic_mode: current ANTIC display mode (needed for GTIA mode 9/10/11 detection)
     pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8) {
         let gtia_mode = (self.prior >> 6) & 0x03;
+
+        // Generate PM graphics for this scanline
+        self.generate_pm_scanline(scanline_y);
 
         // GTIA modes 9/10/11: reinterpret ANTIC mode F data
         if gtia_mode != 0 && antic_mode == 0x0F {
@@ -254,11 +460,192 @@ impl Gtia {
                 }
             }
         } else {
-            // Standard color index mapping
+            // Standard color index mapping with PM compositing
             for x in 0..320 {
-                let color_index = antic_pixels[x];
-                let (r, g, b) = self.get_color_for_index(color_index);
+                let pf_index = antic_pixels[x];
+                let pm_bits = self.pm_scanline[x];
+
+                // Composite PM over playfield using priority
+                let final_index = self.composite_pixel(pf_index, pm_bits);
+                let (r, g, b) = self.get_color_for_index(final_index);
                 self.framebuffer.set_pixel(OVERSCAN_LEFT + x, scanline_y, r, g, b);
+
+                // Update collision registers
+                self.update_collisions(pm_bits, pf_index);
+            }
+        }
+    }
+
+    /// Composite a pixel using PM graphics and playfield with priority
+    /// Returns final color index (0-8)
+    fn composite_pixel(&self, pf_index: u8, pm_bits: u8) -> u8 {
+        // Extract individual PM bits
+        let m0 = (pm_bits & 0x01) != 0;
+        let m1 = (pm_bits & 0x02) != 0;
+        let m2 = (pm_bits & 0x04) != 0;
+        let m3 = (pm_bits & 0x08) != 0;
+        let p0 = (pm_bits & 0x10) != 0;
+        let p1 = (pm_bits & 0x20) != 0;
+        let p2 = (pm_bits & 0x40) != 0;
+        let p3 = (pm_bits & 0x80) != 0;
+
+        let any_pm = pm_bits != 0;
+        let any_pf = pf_index > 0;
+
+        // Get priority mode from PRIOR register bits 0-1
+        let priority_mode = self.prior & 0x03;
+
+        match priority_mode {
+            // Mode 0: All PM in front of all playfield
+            0 => {
+                if p0 { 5 }
+                else if p1 { 6 }
+                else if p2 { 7 }
+                else if p3 { 8 }
+                else if m0 { 5 }
+                else if m1 { 6 }
+                else if m2 { 7 }
+                else if m3 { 8 }
+                else { pf_index }
+            }
+            // Mode 1: P0-P1/M0-M1 in front, playfield, then P2-P3/M2-M3 behind
+            1 => {
+                if p0 { 5 }
+                else if p1 { 6 }
+                else if m0 { 5 }
+                else if m1 { 6 }
+                else if any_pf { pf_index }
+                else if p2 { 7 }
+                else if p3 { 8 }
+                else if m2 { 7 }
+                else if m3 { 8 }
+                else { 0 }
+            }
+            // Mode 2: PF0-PF1 in front, all PM, then PF2-PF3 behind
+            2 => {
+                if pf_index == 1 || pf_index == 2 { pf_index }
+                else if any_pm {
+                    if p0 { 5 }
+                    else if p1 { 6 }
+                    else if p2 { 7 }
+                    else if p3 { 8 }
+                    else if m0 { 5 }
+                    else if m1 { 6 }
+                    else if m2 { 7 }
+                    else if m3 { 8 }
+                    else { pf_index }
+                } else {
+                    pf_index
+                }
+            }
+            // Mode 3: All playfield in front of all PM
+            3 => {
+                if any_pf { pf_index }
+                else if p0 { 5 }
+                else if p1 { 6 }
+                else if p2 { 7 }
+                else if p3 { 8 }
+                else if m0 { 5 }
+                else if m1 { 6 }
+                else if m2 { 7 }
+                else if m3 { 8 }
+                else { 0 }
+            }
+            _ => pf_index,
+        }
+    }
+
+    /// Update collision registers based on PM and playfield at a pixel
+    fn update_collisions(&mut self, pm_bits: u8, pf_index: u8) {
+        if pm_bits == 0 {
+            return;  // No PM objects, no collisions
+        }
+
+        // Extract individual PM bits
+        let m = [
+            (pm_bits & 0x01) != 0,
+            (pm_bits & 0x02) != 0,
+            (pm_bits & 0x04) != 0,
+            (pm_bits & 0x08) != 0,
+        ];
+        let p = [
+            (pm_bits & 0x10) != 0,
+            (pm_bits & 0x20) != 0,
+            (pm_bits & 0x40) != 0,
+            (pm_bits & 0x80) != 0,
+        ];
+
+        // Missile-to-playfield collisions (MxPF)
+        if pf_index > 0 && pf_index <= 4 {
+            let pf_bit = 1 << (pf_index - 1);
+            for i in 0..4 {
+                if m[i] {
+                    match i {
+                        0 => self.m0pf |= pf_bit,
+                        1 => self.m1pf |= pf_bit,
+                        2 => self.m2pf |= pf_bit,
+                        3 => self.m3pf |= pf_bit,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Player-to-playfield collisions (PxPF)
+        if pf_index > 0 && pf_index <= 4 {
+            let pf_bit = 1 << (pf_index - 1);
+            for i in 0..4 {
+                if p[i] {
+                    match i {
+                        0 => self.p0pf |= pf_bit,
+                        1 => self.p1pf |= pf_bit,
+                        2 => self.p2pf |= pf_bit,
+                        3 => self.p3pf |= pf_bit,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Missile-to-player collisions (MxPL)
+        for i in 0..4 {
+            if m[i] {
+                let mut pl_bits = 0u8;
+                for j in 0..4 {
+                    if p[j] {
+                        pl_bits |= 1 << j;
+                    }
+                }
+                if pl_bits != 0 {
+                    match i {
+                        0 => self.m0pl |= pl_bits,
+                        1 => self.m1pl |= pl_bits,
+                        2 => self.m2pl |= pl_bits,
+                        3 => self.m3pl |= pl_bits,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Player-to-player collisions (PxPL)
+        for i in 0..4 {
+            if p[i] {
+                let mut other_pl_bits = 0u8;
+                for j in 0..4 {
+                    if j != i && p[j] {
+                        other_pl_bits |= 1 << j;
+                    }
+                }
+                if other_pl_bits != 0 {
+                    match i {
+                        0 => self.p0pl |= other_pl_bits,
+                        1 => self.p1pl |= other_pl_bits,
+                        2 => self.p2pl |= other_pl_bits,
+                        3 => self.p3pl |= other_pl_bits,
+                        _ => {}
+                    }
+                }
             }
         }
     }

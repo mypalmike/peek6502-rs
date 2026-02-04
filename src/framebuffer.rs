@@ -28,6 +28,16 @@ impl Framebuffer {
         }
     }
 
+    /// Get a pixel at (x, y) as RGB tuple
+    pub fn get_pixel(&self, x: usize, y: usize) -> (u8, u8, u8) {
+        if x < self.width && y < self.height {
+            let offset = (y * self.width + x) * 3;
+            (self.pixels[offset], self.pixels[offset + 1], self.pixels[offset + 2])
+        } else {
+            (0, 0, 0)  // Return black for out-of-bounds
+        }
+    }
+
     /// Clear the framebuffer to black
     pub fn clear(&mut self) {
         for pixel in self.pixels.iter_mut() {
