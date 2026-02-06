@@ -43,9 +43,6 @@ pub struct Atari800 {
     // NMI line (6502 hardware interrupt line)
     nmi_line: bool,
 
-    // IRQ line (6502 hardware interrupt line, shared by POKEY, PIA, PBI)
-    irq_line: bool,
-
     // Cartridge ROM (mapped at $A000-$BFFF for 8KB, $8000-$BFFF for 16KB)
     cart_rom: Option<Vec<u8>>,
     cart_base: u16,
@@ -102,7 +99,6 @@ impl Atari800 {
             master_cycle: 0,
             cpu_halted: false,
             nmi_line: false,
-            irq_line: false,
             cart_rom: None,
             cart_base: 0xA000,
         }
@@ -297,7 +293,6 @@ impl Atari800 {
             master_cycle: 0,
             cpu_halted: false,
             nmi_line: false,
-            irq_line: false,
             cart_rom,
             cart_base,
         };
@@ -465,8 +460,6 @@ impl Atari800 {
         self.cpu = cpu;
 
         // Update IRQ line from POKEY
-        self.irq_line = self.pokey.irq_active();
-
         // Advance ANTIC one scanline
         self.antic.advance_scanline();
 
@@ -677,22 +670,21 @@ impl Atari800 {
     /// Handle keyboard key press event
     /// Calls POKEY to update keyboard registers and manage IRQ line
     pub fn handle_key_press(&mut self, atari_key_code: u8, shift: bool, ctrl: bool) {
-        if self.pokey.key_press(atari_key_code, shift, ctrl) {
-            self.irq_line = true;
-        }
+        self.pokey.key_press(atari_key_code, shift, ctrl);
+        // IRQ state will be checked directly via irq_asserted()
     }
 
     /// Handle keyboard key release event
     /// Clears the keyboard code register
     pub fn handle_key_release(&mut self) {
-        self.irq_line = self.pokey.key_release();
+        self.pokey.key_release();
+        // IRQ state will be checked directly via irq_asserted()
     }
 
     /// Handle Break key press (triggers POKEY IRQ bit 7)
     pub fn handle_break_key(&mut self) {
-        if self.pokey.break_key_press() {
-            self.irq_line = true;
-        }
+        self.pokey.break_key_press();
+        // IRQ state will be checked directly via irq_asserted()
     }
 
     /// Press a console button (OPTION/SELECT/START)
@@ -871,7 +863,8 @@ impl Bus for Atari800 {
                         ChipType::Pokey => {
                             // Special handling for IRQEN register ($D20E)
                             if (addr & 0x0F) == 0x0E {
-                                self.irq_line = self.pokey.write_irqen(val);
+                                self.pokey.write_irqen(val);
+                                // IRQ state will be checked directly via irq_asserted()
                             } else {
                                 self.pokey.write_register(addr, val);
                             }
@@ -918,6 +911,7 @@ impl Bus for Atari800 {
     }
 
     fn irq_asserted(&self) -> bool {
-        self.irq_line
+        // Directly check IRQ sources - no caching
+        self.pokey.irq_active()
     }
 }
