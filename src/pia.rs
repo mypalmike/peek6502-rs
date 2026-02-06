@@ -126,6 +126,18 @@ impl Pia {
         false
     }
 
+    /// Check if PIA is asserting the IRQ line
+    /// IRQ is asserted when either port has both IRQ flag (bit 7) and IRQ enable (bit 0) set
+    pub fn irq_active(&self) -> bool {
+        // Port A: check if IRQ flag (bit 7) is set and IRQ is enabled (bit 0)
+        let porta_irq = (self.pactl & 0x80) != 0 && (self.pactl & 0x01) != 0;
+
+        // Port B: check if IRQ flag (bit 7) is set and IRQ is enabled (bit 0)
+        let portb_irq = (self.pbctl & 0x80) != 0 && (self.pbctl & 0x01) != 0;
+
+        porta_irq || portb_irq
+    }
+
     /// Get the actual PORTB data register value (for banking control)
     pub fn get_portb(&self) -> u8 {
         self.portb

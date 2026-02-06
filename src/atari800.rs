@@ -911,7 +911,9 @@ impl Bus for Atari800 {
     }
 
     fn irq_asserted(&self) -> bool {
-        // Directly check IRQ sources - no caching
-        self.pokey.irq_active()
+        // Directly check all IRQ sources - no caching
+        // POKEY: keyboard, timers, serial I/O interrupts
+        // PIA: proceed line and interrupt line (via PACTL/PBCTL bit 7)
+        self.pokey.irq_active() || self.pia.irq_active()
     }
 }
