@@ -22,6 +22,9 @@ pub struct Pia {
     // Input state (what's actually on the pins)
     porta_input: u8,
     portb_input: u8,
+
+    // CB2 output state (used for SIO command line)
+    cb2_output: bool,
 }
 
 impl Pia {
@@ -35,6 +38,7 @@ impl Pia {
             pbctl: 0,           // Bit 2 = 0: $D302 accesses DDRB initially
             porta_input: 0xFF,  // No joystick input (active low)
             portb_input: 0xFF,  // No console keys pressed (active low), no special boot mode
+            cb2_output: false,  // CB2 starts low
         }
     }
 
@@ -107,6 +111,19 @@ impl Pia {
             0x03 => {
                 // Write PBCTL (bits 7,6 are read-only IRQ flags)
                 self.pbctl = (self.pbctl & 0xC0) | (val & 0x3F);
+
+                // PBCTL bits 5-3 control CB2 mode
+                let cb2_mode = (val >> 3) & 0x07;
+                match cb2_mode {
+                    6 => {
+                        // Mode 6: Output low
+                        self.cb2_output = false;
+                    }
+                    _ => {
+                        // All other modes: Output high (simplified)
+                        self.cb2_output = true;
+                    }
+                }
             }
             _ => {}
         }
@@ -146,5 +163,10 @@ impl Pia {
     /// Set PORTB data register (for machine-specific initialization)
     pub fn set_portb(&mut self, value: u8) {
         self.portb = value;
+    }
+
+    /// Get CB2 output state (used for SIO command line)
+    pub fn get_cb2_output(&self) -> bool {
+        self.cb2_output
     }
 }

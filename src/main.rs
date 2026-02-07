@@ -128,23 +128,18 @@ fn main() {
         println!("  convert atari800_output.ppm atari800_output.png");
         println!("  open atari800_output.png");
     } else if debugger_mode {
-        // Run the emulator with debugger
-        println!("Starting {:?} with debugger", machine_type);
-        let mut atari800 = Atari800::with_config(machine_type, cart1_path.as_deref());
-
-        loop {
-            atari800.tick();
-        }
+        // Run with SDL display and debugger enabled
+        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling, true);
     } else if animate_mode {
         // Run color cycling animation test
         run_animated_test(machine_type, video_scaling);
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling);
+        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling, false);
     }
 }
 
-fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64) {
+fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64, debug_mode: bool) {
     // Create keyboard mapper based on mode
     let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
         "physical" => Box::new(input::PhysicalMapper),
@@ -179,6 +174,10 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
     // Create Atari800 instance
     let mut atari800 = Atari800::with_config(machine_type, cart_path);
 
+    // Enable debugger if requested
+    if debug_mode {
+        atari800.enable_debug_mode();
+    }
 
     // Initialize timing for speed limiting
     const FRAME_RATE: f64 = 59.92;  // NTSC frame rate (for speed limiting only)
@@ -250,10 +249,18 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
 
         // Run CPU until ANTIC signals frame completion
         // ANTIC internally manages video timing (262 scanlines = 1 frame)
-        loop {
-            if atari800.tick_cpu() {
-                atari800.render();
-                break;
+        if debug_mode {
+            // In debug mode, just call tick() in a loop (debugger controls execution)
+            loop {
+                atari800.tick();
+            }
+        } else {
+            // Normal mode uses tick_cpu()
+            loop {
+                if atari800.tick_cpu() {
+                    atari800.render();
+                    break;
+                }
             }
         }
 

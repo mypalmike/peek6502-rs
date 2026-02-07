@@ -17,3 +17,5 @@ pub mod banking;  // RAM banking for 130XE extended memory
 pub mod rom_overlay;  // ROM overlays for 800XL/130XE
 pub mod machine_config;
 pub mod rom_scanner;
+pub mod sio;  // Serial I/O controller
+pub mod atrdisk;  // ATR disk image handler

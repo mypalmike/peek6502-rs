@@ -4,7 +4,7 @@
 // ATR is the standard Atari 8-bit disk image format.
 
 use std::fs;
-use crate::sio_new::{SioDevice, SioResponse};
+use crate::sio::{SioDevice, SioResponse};
 
 pub struct AtrDisk {
     image_data: Vec<u8>,      // Entire ATR file in memory

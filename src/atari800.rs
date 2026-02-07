@@ -423,6 +423,12 @@ impl Atari800 {
         println!("Loaded XEX from {} ({} segments)", path, segment_count);
     }
 
+    /// Enable GDB-style debug mode
+    pub fn enable_debug_mode(&mut self) {
+        let initial_pc = self.cpu.pc;
+        self.debugger.enable_debug_mode(initial_pc);
+    }
+
     pub fn tick(&mut self) {
         // For debugger mode - uses interactive debugger
         // We need to temporarily take ownership of cpu and debugger to call tick

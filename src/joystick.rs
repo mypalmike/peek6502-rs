@@ -19,14 +19,14 @@ pub struct JoystickState {
 
 impl JoystickState {
     /// Convert joystick state to 4-bit value for PIA port (active low)
-    /// Bit 0: right, Bit 1: left, Bit 2: down, Bit 3: up
+    /// Bit 0: up, Bit 1: down, Bit 2: left, Bit 3: right
     /// 0 = pressed, 1 = not pressed
     pub fn to_pia_bits(&self) -> u8 {
         let mut bits = 0xFF;  // All released by default
-        if self.right { bits &= !0x01; }
-        if self.left  { bits &= !0x02; }
-        if self.down  { bits &= !0x04; }
-        if self.up    { bits &= !0x08; }
+        if self.up { bits &= !0x01; }
+        if self.down { bits &= !0x02; }
+        if self.left { bits &= !0x04; }
+        if self.right { bits &= !0x08; }
         bits
     }
 

@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::bus::Bus;
 use crate::cpu::Cpu;
@@ -29,6 +31,10 @@ pub struct Debugger {
     n_runs: u32,
     breakpoints: HashSet<u16>,
     opcodes: [(Op, Mode); 256],
+    pub debug_mode: bool,  // GDB-style CLI debugger mode
+    trace_mode: bool,  // Trace mode - print each instruction as it executes
+    trace_count: Option<u32>,  // Number of instructions to trace (None = unlimited)
+    interrupt_flag: Option<Arc<AtomicBool>>,  // Ctrl-C signal flag
 }
 
 impl Debugger {
@@ -39,6 +45,10 @@ impl Debugger {
             running: false,
             n_runs: 0,
             breakpoints: HashSet::new(),
+            debug_mode: false,
+            trace_mode: false,
+            trace_count: None,
+            interrupt_flag: None,
             opcodes: [
                 // 0x00 - 0x0F
                 (Op::BRK, Mode::IMP), (Op::ORA, Mode::IZX), (Op::HLT, Mode::IMP), (Op::SLO, Mode::IZX),
@@ -139,7 +149,34 @@ impl Debugger {
         }
     }
 
+    /// Enable GDB-style CLI debugger mode
+    pub fn enable_debug_mode(&mut self, initial_pc: u16) {
+        self.debug_mode = true;
+        self.running = false;
+        self.breakpoints.insert(initial_pc);
+
+        // Set up Ctrl-C handler
+        let interrupt_flag = Arc::new(AtomicBool::new(false));
+        self.interrupt_flag = Some(interrupt_flag.clone());
+
+        ctrlc::set_handler(move || {
+            interrupt_flag.store(true, Ordering::SeqCst);
+            println!("\n^C (Interrupt - breaking at next instruction)");
+        })
+        .expect("Error setting Ctrl-C handler");
+
+        println!("Debugger enabled. Breaking at first instruction (${:04X})", initial_pc);
+        println!("Commands: c (continue), n (next), s (step), b <addr> (breakpoint), p <addr> [size] (print), h (help)");
+        println!("Press Ctrl-C during execution to break at next instruction");
+    }
+
     pub fn tick(&mut self, cpu: &mut Cpu, bus: &mut dyn Bus) {
+        // GDB-style debugger mode
+        if self.debug_mode {
+            return self.debug_tick(cpu, bus);
+        }
+
+        // Original debugger mode (for compatibility)
         if self.running {
             self.cpu_tick(cpu, bus);
             if self.breakpoints.contains(&cpu.pc) {
@@ -205,6 +242,227 @@ impl Debugger {
             }
             if command[0] == "s" {
                 self.cpu_tick(cpu, bus);
+            }
+        }
+    }
+
+    fn debug_tick(&mut self, cpu: &mut Cpu, bus: &mut dyn Bus) {
+        // Check for Ctrl-C interrupt
+        if let Some(ref flag) = self.interrupt_flag {
+            if flag.load(Ordering::SeqCst) {
+                flag.store(false, Ordering::SeqCst);
+                self.running = false;
+                if self.trace_mode {
+                    self.trace_mode = false;
+                    self.trace_count = None;
+                    println!("\nTrace stopped.");
+                }
+            }
+        }
+
+        // Check if we hit a breakpoint or need to stop
+        if !self.running || self.breakpoints.contains(&cpu.pc) {
+            self.running = false;
+
+            // Show current instruction
+            let b1 = bus.read(cpu.pc);
+            let b2 = bus.read(cpu.pc + 1);
+            let b3 = bus.read(cpu.pc + 2);
+
+            println!("=> ${:04X}: ", cpu.pc);
+            print!("   ");
+            self.disassemble(b1, b2, b3);
+            print!("   {}\n", cpu.state_string());
+
+            // Read command
+            loop {
+                print!("(debug) ");
+                use std::io::Write;
+                io::stdout().flush().unwrap();
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).unwrap();
+                let parts: Vec<&str> = input.trim().split_whitespace().collect();
+
+                if parts.is_empty() {
+                    continue;
+                }
+
+                match parts[0] {
+                    "c" | "continue" => {
+                        // Execute one instruction to get past current breakpoint
+                        self.execute_instruction(cpu, bus);
+                        self.running = true;
+                        self.trace_mode = false;
+                        break;
+                    }
+                    "t" | "trace" => {
+                        // Continue execution while printing each instruction
+                        // Optional: t <count> to trace N instructions
+                        let count = if parts.len() >= 2 {
+                            match parts[1].parse::<u32>() {
+                                Ok(n) => Some(n),
+                                Err(_) => {
+                                    println!("Invalid count: {}. Usage: t [count]", parts[1]);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        self.execute_instruction(cpu, bus);
+                        self.running = true;
+                        self.trace_mode = true;
+                        self.trace_count = count;
+
+                        if let Some(n) = count {
+                            println!("Tracing {} instructions...", n);
+                        } else {
+                            println!("Tracing enabled. Press Ctrl-C to stop.");
+                        }
+                        break;
+                    }
+                    "n" | "next" => {
+                        // Step one complete instruction
+                        self.execute_instruction(cpu, bus);
+                        break;
+                    }
+                    "s" | "step" => {
+                        // Step (same as next for now, could be different for JSR)
+                        self.execute_instruction(cpu, bus);
+                        break;
+                    }
+                    "b" | "break" | "breakpoint" => {
+                        if parts.len() < 2 {
+                            println!("Usage: b <hex_address>");
+                            continue;
+                        }
+
+                        // Parse hex address
+                        let addr_str = parts[1].trim_start_matches("0x").trim_start_matches("$");
+                        match u16::from_str_radix(addr_str, 16) {
+                            Ok(addr) => {
+                                if self.breakpoints.contains(&addr) {
+                                    self.breakpoints.remove(&addr);
+                                    println!("Removed breakpoint at ${:04X}", addr);
+                                } else {
+                                    self.breakpoints.insert(addr);
+                                    println!("Added breakpoint at ${:04X}", addr);
+                                }
+                            }
+                            Err(_) => println!("Invalid hex address: {}", parts[1]),
+                        }
+                    }
+                    "p" | "print" => {
+                        if parts.len() < 2 {
+                            println!("Usage: p <hex_address> [1|2]");
+                            println!("  1 = print 1 byte (default)");
+                            println!("  2 = print 2 bytes (little endian)");
+                            continue;
+                        }
+
+                        // Parse address
+                        let addr_str = parts[1].trim_start_matches("0x").trim_start_matches("$");
+                        let addr = match u16::from_str_radix(addr_str, 16) {
+                            Ok(a) => a,
+                            Err(_) => {
+                                println!("Invalid hex address: {}", parts[1]);
+                                continue;
+                            }
+                        };
+
+                        // Parse size (default 1)
+                        let size = if parts.len() >= 3 {
+                            parts[2].parse::<u8>().unwrap_or(1)
+                        } else {
+                            1
+                        };
+
+                        match size {
+                            1 => {
+                                let val = bus.read(addr);
+                                println!("${:04X}: ${:02X} = {} (decimal)", addr, val, val);
+                            }
+                            2 => {
+                                let lo = bus.read(addr);
+                                let hi = bus.read(addr + 1);
+                                let val = (hi as u16) << 8 | lo as u16;
+                                println!("${:04X}: ${:02X} ${:02X} = ${:04X} = {} (decimal)",
+                                         addr, lo, hi, val, val);
+                            }
+                            _ => {
+                                println!("Size must be 1 or 2");
+                            }
+                        }
+                    }
+                    "q" | "quit" => {
+                        println!("Quitting...");
+                        std::process::exit(0);
+                    }
+                    "i" | "info" => {
+                        println!("Breakpoints:");
+                        if self.breakpoints.is_empty() {
+                            println!("  (none)");
+                        } else {
+                            let mut bps: Vec<_> = self.breakpoints.iter().collect();
+                            bps.sort();
+                            for bp in bps {
+                                println!("  ${:04X}", bp);
+                            }
+                        }
+                    }
+                    "h" | "help" => {
+                        println!("Commands:");
+                        println!("  c, continue          - Continue execution");
+                        println!("  t [count]            - Trace execution (optional: trace N instructions)");
+                        println!("  n, next              - Execute next instruction");
+                        println!("  s, step              - Step into (same as next)");
+                        println!("  b <addr>             - Toggle breakpoint at address");
+                        println!("  p <addr> [1|2]       - Print memory (1=byte, 2=word little-endian)");
+                        println!("  i, info              - Show breakpoints");
+                        println!("  q, quit              - Quit emulator");
+                        println!("  h, help              - Show this help");
+                    }
+                    _ => {
+                        println!("Unknown command: {}. Type 'h' for help.", parts[0]);
+                    }
+                }
+            }
+        } else {
+            // Running normally - execute complete instruction
+            if self.trace_mode {
+                // Print instruction before executing
+                let b1 = bus.read(cpu.pc);
+                let b2 = bus.read(cpu.pc + 1);
+                let b3 = bus.read(cpu.pc + 2);
+                print!("${:04X}: ", cpu.pc);
+                self.disassemble(b1, b2, b3);
+
+                // Decrement trace counter if set
+                if let Some(count) = self.trace_count {
+                    if count <= 1 {
+                        // Last instruction - stop tracing
+                        self.running = false;
+                        self.trace_mode = false;
+                        self.trace_count = None;
+                        println!("\nTrace complete.");
+                    } else {
+                        self.trace_count = Some(count - 1);
+                    }
+                }
+            }
+            self.execute_instruction(cpu, bus);
+        }
+    }
+
+    /// Execute one complete instruction (all cycles until instruction boundary)
+    fn execute_instruction(&mut self, cpu: &mut Cpu, bus: &mut dyn Bus) {
+        // Execute cycles until we're at an instruction boundary
+        loop {
+            cpu.tick(bus);
+            if cpu.cycles_remaining == 0 {
+                break;
             }
         }
     }

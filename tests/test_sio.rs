@@ -738,7 +738,7 @@ fn test_full_command_timing() {
 #[test]
 fn test_pia_cb2_controls_sio_command_line() {
     use atari800_rs::pia::Pia;
-    use atari800_rs::sio_new::SioController;
+    use atari800_rs::sio::SioController;
 
     let mut pia = Pia::new();
     let mut sio = SioController::new();
@@ -762,7 +762,7 @@ fn test_pia_cb2_controls_sio_command_line() {
 #[test]
 fn test_full_command_sequence_via_pia() {
     use atari800_rs::pia::Pia;
-    use atari800_rs::sio_new::{SioController, SioDevice, SioResponse, SioTiming};
+    use atari800_rs::sio::{SioController, SioDevice, SioResponse, SioTiming};
 
     // Mock device for testing
     struct MockDisk {
@@ -830,7 +830,7 @@ fn test_full_command_sequence_via_pia() {
 #[test]
 fn test_pia_command_line_must_deassert_before_response() {
     use atari800_rs::pia::Pia;
-    use atari800_rs::sio_new::{SioController, SioDevice, SioResponse, SioTiming};
+    use atari800_rs::sio::{SioController, SioDevice, SioResponse, SioTiming};
 
     struct MockDevice;
     impl SioDevice for MockDevice {
