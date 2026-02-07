@@ -2,12 +2,15 @@
 //
 // This module implements the Atari SIO protocol with a clean separation of concerns:
 // - SioDevice trait: abstraction for any SIO peripheral (disk, printer, modem, etc.)
-// - SioController: protocol state machine and device routing
-// - Integration with POKEY (serial port) and PIA (command line)
+// - SioController: protocol state machine (uses SioBus for hardware access)
+// - SioBus trait: bus abstraction for routing and hardware integration
 //
-// See docs/SIO_ARCHITECTURE.md for detailed protocol documentation.
+// The SioController handles protocol state machine logic, while the SioBus trait
+// provides access to hardware state (PIA command line) and device routing.
+// This follows the same architectural pattern as the CPU Bus.
 
 use std::collections::VecDeque;
+use crate::sio_bus::SioBus;
 
 // ============================================================================
 // Public Types
@@ -157,6 +160,14 @@ enum SioState {
         bytes_sent: usize,
         response: Vec<u8>,
     },
+
+    /// Inter-frame delay between Complete and Data
+    /// The OS WAIT routine expects Complete as a single byte,
+    /// then the OS calls RECEIV to get the data frame
+    InterFrameDelay {
+        data_frame: Vec<u8>,  // Data + checksum to send after delay
+        cycles_remaining: u32,
+    },
 }
 
 // ============================================================================
@@ -167,17 +178,17 @@ pub struct SioController {
     /// Current protocol state
     state: SioState,
 
-    /// Connected devices
-    devices: Vec<Box<dyn SioDevice>>,
-
-    /// Command line state (from PIA CB2)
-    command_line: bool,
+    /// Previous command line state (for edge detection)
+    prev_command_line: bool,
 
     /// Queue of bytes to send to POKEY
     tx_queue: VecDeque<u8>,
 
-    /// Timing parameters
-    timing: SioTiming,
+    /// Debug logging enable
+    debug: bool,
+
+    /// Byte pacing timer - cycles remaining until next byte can be sent
+    byte_timer: u32,
 }
 
 /// Timing parameters for cycle-accurate emulation
@@ -212,7 +223,7 @@ impl SioTiming {
 
         SioTiming {
             cycles_per_byte,
-            result_min_delay: (NTSC_CLOCK as f64 * 250e-6) as u32,      // 250μs
+            result_min_delay: (NTSC_CLOCK as f64 * 2e-3) as u32,        // 2ms (was 250μs - too short!)
             read_sector_delay: (NTSC_CLOCK as f64 * 100e-3) as u32,     // 100ms
             status_delay: (NTSC_CLOCK as f64 * 1e-3) as u32,            // 1ms
         }
@@ -229,44 +240,56 @@ impl SioTiming {
     }
 }
 
+impl Default for SioController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SioController {
     pub fn new() -> Self {
-        Self::with_timing(SioTiming::default())
-    }
-
-    pub fn with_timing(timing: SioTiming) -> Self {
         SioController {
             state: SioState::Idle,
-            devices: Vec::new(),
-            command_line: false,
+            prev_command_line: false,
             tx_queue: VecDeque::new(),
-            timing,
+            debug: false,
+            byte_timer: 0,
         }
     }
 
-    /// Add a device to the SIO bus
-    pub fn add_device(&mut self, device: Box<dyn SioDevice>) {
-        self.devices.push(device);
+    /// Enable debug logging
+    pub fn enable_debug(&mut self) {
+        self.debug = true;
+        eprintln!("[SIO] Debug logging enabled");
     }
 
-    /// Update command line state (from PIA CB2)
-    pub fn set_command_line(&mut self, asserted: bool) {
-        let was_asserted = self.command_line;
-        self.command_line = asserted;
+    /// Detect command line edges and update state
+    /// This is called from tick() with the current command line state from the bus
+    fn handle_command_line_edges(&mut self, command_line: bool) {
+        let was_asserted = self.prev_command_line;
+        self.prev_command_line = command_line;
 
         // Rising edge: start new command frame
-        if asserted && !was_asserted {
+        if command_line && !was_asserted {
+            // Only accept new commands when truly idle (no pending state OR bytes)
+            // Don't interrupt if we're executing, waiting, or transmitting
+            if !matches!(self.state, SioState::Idle) || !self.tx_queue.is_empty() {
+                eprintln!("[SIO] WARNING: Ignoring new command - busy (state: {}, {} bytes in queue)",
+                          self.state(), self.tx_queue.len());
+                return;
+            }
+
+            if self.debug {
+                eprintln!("[SIO] Command line ASSERTED (rising edge) - starting new command frame");
+            }
             self.state = SioState::ReceivingCommand {
                 bytes_received: 0,
                 buffer: [0; 5],
             };
             self.tx_queue.clear();
-        }
-
-        // Falling edge during wait: proceed to send response
-        if !asserted && was_asserted {
-            if let SioState::WaitingForCommandLineDeassert { frame } = self.state {
-                self.process_command(frame);
+        } else if !command_line && was_asserted {
+            if self.debug {
+                eprintln!("[SIO] Command line DEASSERTED (falling edge)");
             }
         }
     }
@@ -282,9 +305,17 @@ impl SioController {
                 buffer[bytes_received] = byte;
                 let new_count = bytes_received + 1;
 
+                if self.debug {
+                    eprintln!("[SIO] Received byte {}/{}: ${:02X}", new_count, 5, byte);
+                }
+
                 if new_count >= 5 {
                     // Command frame complete - wait for command line to deassert
                     let frame = CommandFrame::from_bytes(&buffer);
+                    if self.debug {
+                        eprintln!("[SIO] Command frame complete: dev=${:02X} cmd=${:02X} aux1=${:02X} aux2=${:02X} cksum=${:02X}",
+                                  frame.device_id, frame.command, frame.aux1, frame.aux2, frame.checksum);
+                    }
                     self.state = SioState::WaitingForCommandLineDeassert { frame };
                 } else {
                     self.state = SioState::ReceivingCommand {
@@ -296,18 +327,20 @@ impl SioController {
         }
     }
 
-    /// Check if there's a byte ready to send to POKEY
-    pub fn has_byte_for_pokey(&self) -> bool {
-        !self.tx_queue.is_empty()
-    }
-
-    /// Get next byte to send to POKEY (if available)
-    pub fn get_byte_for_pokey(&mut self) -> Option<u8> {
-        self.tx_queue.pop_front()
-    }
-
     /// Execute one machine cycle
-    pub fn tick(&mut self) {
+    /// Queries the bus for command line state and routes commands to devices
+    pub fn tick(&mut self, bus: &mut dyn SioBus) {
+        // Check command line for edges
+        let command_line = bus.get_command_line();
+        self.handle_command_line_edges(command_line);
+
+        // Process command frame if waiting and command line deasserted
+        if let SioState::WaitingForCommandLineDeassert { frame } = self.state {
+            if !command_line {
+                self.process_command(frame, bus);
+            }
+        }
+
         // Handle executing state with delay
         if let SioState::Executing {
             device_index,
@@ -317,8 +350,16 @@ impl SioController {
         {
             if *cycles_remaining == 0 {
                 // Execution complete - prepare response
+                eprintln!("[SIO] Execution delay complete, preparing response (byte_timer was: {})", self.byte_timer);
                 let response = response.clone();
-                self.prepare_response(response);
+
+                // CRITICAL: Set byte_timer to result_min_delay before queueing response
+                // This ensures Complete doesn't immediately overwrite ACK
+                let timing = bus.get_sio_timing();
+                self.byte_timer = timing.result_min_delay;
+                eprintln!("[SIO] Set byte_timer = {} (result_min_delay)", self.byte_timer);
+
+                self.prepare_response(response, timing);
             } else {
                 self.state = SioState::Executing {
                     device_index: *device_index,
@@ -327,93 +368,162 @@ impl SioController {
                 };
             }
         }
+
+        // Handle inter-frame delay between Complete and Data
+        if let SioState::InterFrameDelay {
+            data_frame,
+            cycles_remaining,
+        } = &self.state
+        {
+            if *cycles_remaining == 0 {
+                // Delay complete - queue data frame
+                eprintln!("[SIO] Inter-frame delay complete, queueing data frame ({} bytes)", data_frame.len());
+                for &byte in data_frame {
+                    self.tx_queue.push_back(byte);
+                }
+                self.state = SioState::Idle;
+            } else {
+                self.state = SioState::InterFrameDelay {
+                    data_frame: data_frame.clone(),
+                    cycles_remaining: cycles_remaining - 1,
+                };
+            }
+        }
+
+        // Handle byte pacing - send one byte at a time with proper timing
+        if self.byte_timer > 0 {
+            self.byte_timer -= 1;
+            if !self.tx_queue.is_empty() && self.byte_timer % 100 == 0 {
+                eprintln!("[SIO] Byte pacing: {} cycles until next byte (queue has {} bytes)",
+                          self.byte_timer, self.tx_queue.len());
+            }
+        }
+
+        // When timer expires and we have bytes to send, send one to POKEY
+        if self.byte_timer == 0 && !self.tx_queue.is_empty() {
+            if let Some(byte) = self.tx_queue.pop_front() {
+                bus.send_byte_to_pokey(byte);
+
+                // Reset timer for next byte (based on baud rate)
+                let timing = bus.get_sio_timing();
+                self.byte_timer = timing.cycles_per_byte;
+
+                // Always log byte transmission for debugging
+                eprintln!("[SIO] → Transmitted byte ${:02X} to POKEY ({} bytes remaining, next in {} cycles)",
+                          byte, self.tx_queue.len(), self.byte_timer);
+            }
+        }
     }
 
-    /// Process a complete command frame
-    fn process_command(&mut self, frame: CommandFrame) {
+    /// Process a command frame using the bus to route to devices
+    /// This is called from tick() after command line deasserts
+    fn process_command(&mut self, frame: CommandFrame, bus: &mut dyn SioBus) {
+        // Always log SIO commands
+        eprintln!("[SIO] Command: dev=${:02X} cmd=${:02X} aux=${:02X}{:02X}",
+                  frame.device_id, frame.command, frame.aux1, frame.aux2);
+
         // Validate checksum
         if !frame.validate_checksum() {
+            eprintln!("[SIO] → NAK (bad checksum)");
             self.tx_queue.push_back(0x4E); // NAK
             self.state = SioState::Idle;
             return;
         }
 
-        // Find matching device
-        for (index, device) in self.devices.iter_mut().enumerate() {
-            if device.accepts_device_id(frame.device_id) {
-                // Send ACK first
-                self.tx_queue.push_back(0x41);
-                self.state = SioState::SendingAck;
-
-                // Execute command
-                let response = device.handle_command(frame.command, frame.aux1, frame.aux2);
-
-                // Determine execution delay
-                let delay = match frame.command {
-                    0x53 => self.timing.status_delay,      // Status
-                    0x52 => self.timing.read_sector_delay, // Read
-                    _ => self.timing.status_delay,
-                };
-
-                self.state = SioState::Executing {
-                    device_index: index,
-                    response,
-                    cycles_remaining: delay,
-                };
-                return;
-            }
+        // Check if a device exists for this ID
+        if !bus.has_sio_device(frame.device_id) {
+            eprintln!("[SIO] → No device (ID ${:02X})", frame.device_id);
+            // No device found - don't respond (devices ignore unknown IDs)
+            self.state = SioState::Idle;
+            return;
         }
 
-        // No device found - don't respond (devices ignore unknown IDs)
-        self.state = SioState::Idle;
+        // Send ACK first
+        eprintln!("[SIO] → ACK");
+        self.tx_queue.push_back(0x41);
+        self.state = SioState::SendingAck;
+
+        // Route command to device via bus
+        let response = bus.route_sio_command(frame.device_id, frame.command, frame.aux1, frame.aux2);
+
+        // Determine execution delay
+        let timing = bus.get_sio_timing();
+        let delay = match frame.command {
+            0x53 => timing.status_delay,      // Status
+            0x52 => timing.read_sector_delay, // Read
+            _ => timing.status_delay,
+        };
+
+        if self.debug {
+            eprintln!("[SIO] Device responded, delay={} cycles", delay);
+        }
+
+        let timing = bus.get_sio_timing();
+
+        // If instant timing (delay = 0), prepare response immediately
+        if delay == 0 {
+            eprintln!("[SIO] Instant timing, preparing response immediately");
+            self.prepare_response(response, timing);
+        } else {
+            eprintln!("[SIO] Entering Executing state with {} cycle delay", delay);
+            self.state = SioState::Executing {
+                device_index: 0,  // Not used anymore - devices accessed via bus
+                response,
+                cycles_remaining: delay,
+            };
+        }
     }
 
     /// Prepare response bytes to send
-    fn prepare_response(&mut self, response: SioResponse) {
-        let mut bytes = Vec::new();
-
+    /// For CompleteWithData/ErrorWithData, this queues the result byte alone
+    /// and sets up InterFrameDelay state to send data frame separately
+    fn prepare_response(&mut self, response: SioResponse, timing: &SioTiming) {
         match response {
             SioResponse::Nak => {
-                bytes.push(0x4E);
+                eprintln!("[SIO] → NAK");
+                self.tx_queue.push_back(0x4E);
+                self.state = SioState::Idle;
             }
             SioResponse::Ack => {
-                bytes.push(0x41);
+                eprintln!("[SIO] → ACK");
+                self.tx_queue.push_back(0x41);
+                self.state = SioState::Idle;
             }
             SioResponse::Complete => {
-                bytes.push(0x43);
+                eprintln!("[SIO] → Complete");
+                self.tx_queue.push_back(0x43);
+                self.state = SioState::Idle;
             }
             SioResponse::Error => {
-                bytes.push(0x45);
+                eprintln!("[SIO] → Error");
+                self.tx_queue.push_back(0x45);
+                self.state = SioState::Idle;
             }
             SioResponse::CompleteWithData(ref data) | SioResponse::ErrorWithData(ref data) => {
-                // Result byte
-                bytes.push(response.protocol_byte());
+                // FRAME 1: Result byte ALONE (Complete or Error)
+                let result_byte = response.protocol_byte();
+                self.tx_queue.push_back(result_byte);
+                eprintln!("[SIO] → Result byte ${:02X} (Complete/Error)", result_byte);
 
-                // Data bytes
-                bytes.extend_from_slice(data);
+                // FRAME 2: Data + checksum (will be sent after inter-frame delay)
+                let mut data_frame = data.clone();
+                let checksum = sio_checksum(data);
+                data_frame.push(checksum);
+                eprintln!("[SIO]   → Will send data frame after {} cycle delay ({} bytes + checksum)",
+                          timing.result_min_delay, data.len());
 
-                // Checksum (calculated on result + data)
-                let checksum = sio_checksum(&bytes);
-                bytes.push(checksum);
+                // Enter InterFrameDelay state
+                self.state = SioState::InterFrameDelay {
+                    data_frame,
+                    cycles_remaining: timing.result_min_delay,
+                };
             }
         }
-
-        // Queue all bytes
-        for byte in bytes {
-            self.tx_queue.push_back(byte);
-        }
-
-        self.state = SioState::Idle;
     }
 
     /// Get current state (for debugging/testing)
     pub fn state(&self) -> String {
         format!("{:?}", self.state)
-    }
-
-    /// Get device count
-    pub fn device_count(&self) -> usize {
-        self.devices.len()
     }
 }
 
@@ -443,6 +553,7 @@ pub fn sio_checksum(bytes: &[u8]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sio_bus::SioBus;
 
     #[test]
     fn test_checksum_simple() {
@@ -483,18 +594,78 @@ mod tests {
         }
     }
 
+    // Mock SIO bus for testing
+    struct MockSioBus {
+        command_line: bool,
+        devices: Vec<Box<dyn SioDevice>>,
+        timing: SioTiming,
+        pokey_bytes: Vec<u8>,  // Capture bytes sent to POKEY
+    }
+
+    impl MockSioBus {
+        fn new() -> Self {
+            MockSioBus {
+                command_line: false,
+                devices: Vec::new(),
+                timing: SioTiming::instant(),
+                pokey_bytes: Vec::new(),
+            }
+        }
+
+        fn add_device(&mut self, device: Box<dyn SioDevice>) {
+            self.devices.push(device);
+        }
+
+        fn set_command_line(&mut self, asserted: bool) {
+            self.command_line = asserted;
+        }
+
+        fn get_pokey_bytes(&self) -> &[u8] {
+            &self.pokey_bytes
+        }
+    }
+
+    impl SioBus for MockSioBus {
+        fn get_command_line(&self) -> bool {
+            self.command_line
+        }
+
+        fn route_sio_command(&mut self, device_id: u8, cmd: u8, aux1: u8, aux2: u8) -> SioResponse {
+            for device in &mut self.devices {
+                if device.accepts_device_id(device_id) {
+                    return device.handle_command(cmd, aux1, aux2);
+                }
+            }
+            SioResponse::Nak
+        }
+
+        fn has_sio_device(&self, device_id: u8) -> bool {
+            self.devices.iter().any(|d| d.accepts_device_id(device_id))
+        }
+
+        fn send_byte_to_pokey(&mut self, byte: u8) {
+            self.pokey_bytes.push(byte);
+        }
+
+        fn get_sio_timing(&self) -> &SioTiming {
+            &self.timing
+        }
+    }
+
     #[test]
     fn test_controller_basic() {
-        let mut sio = SioController::with_timing(SioTiming::instant());
+        let mut sio = SioController::new();
+        let mut bus = MockSioBus::new();
 
-        // Add mock device
-        sio.add_device(Box::new(MockDevice {
+        // Add mock device to bus
+        bus.add_device(Box::new(MockDevice {
             id: 0x31,
             response: SioResponse::CompleteWithData(vec![0x10, 0xFF, 0x60, 0x00]),
         }));
 
         // Simulate command frame
-        sio.set_command_line(true);
+        bus.set_command_line(true);
+        sio.tick(&mut bus);  // Detect rising edge
 
         sio.receive_byte(0x31); // Device ID
         sio.receive_byte(0x53); // Command (Status)
@@ -502,42 +673,43 @@ mod tests {
         sio.receive_byte(0x00); // AUX2
         sio.receive_byte(0x84); // Checksum ($31 + $53 + $00 + $00, matches AltirraOS)
 
-        sio.set_command_line(false);
+        bus.set_command_line(false);
+        sio.tick(&mut bus);  // Detect falling edge and process command
 
-        // Should send ACK
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x41));
-
-        // Tick to complete execution
-        while !sio.has_byte_for_pokey() {
-            sio.tick();
+        // Tick multiple times to send all bytes (instant timing = 0 cycles per byte)
+        // Each tick sends one byte when timer expires
+        for _ in 0..10 {
+            sio.tick(&mut bus);
         }
 
-        // Should send Complete
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x43));
-
-        // Should send data bytes
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x10));
-        assert_eq!(sio.get_byte_for_pokey(), Some(0xFF));
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x60));
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x00));
+        // Check all bytes were sent to POKEY in correct order
+        let bytes = bus.get_pokey_bytes();
+        assert_eq!(bytes[0], 0x41);  // ACK
+        assert_eq!(bytes[1], 0x43);  // Complete
+        assert_eq!(bytes[2], 0x10);  // Data byte 1
+        assert_eq!(bytes[3], 0xFF);  // Data byte 2
+        assert_eq!(bytes[4], 0x60);  // Data byte 3
+        assert_eq!(bytes[5], 0x00);  // Data byte 4
 
         // Should send checksum
         let checksum = sio_checksum(&[0x43, 0x10, 0xFF, 0x60, 0x00]);
-        assert_eq!(sio.get_byte_for_pokey(), Some(checksum));
+        assert_eq!(bytes[6], checksum);
     }
 
     #[test]
     fn test_bad_checksum_accepted() {
         // Mirror atari800-master: checksums are not validated
         // Even "bad" checksums are accepted
-        let mut sio = SioController::with_timing(SioTiming::instant());
+        let mut sio = SioController::new();
+        let mut bus = MockSioBus::new();
 
-        sio.add_device(Box::new(MockDevice {
+        bus.add_device(Box::new(MockDevice {
             id: 0x31,
             response: SioResponse::Complete,
         }));
 
-        sio.set_command_line(true);
+        bus.set_command_line(true);
+        sio.tick(&mut bus);
 
         // Send any checksum - it will be accepted
         sio.receive_byte(0x31);
@@ -546,9 +718,63 @@ mod tests {
         sio.receive_byte(0x00);
         sio.receive_byte(0xFF); // Any value accepted
 
-        sio.set_command_line(false);
+        bus.set_command_line(false);
+        sio.tick(&mut bus);
 
-        // Should send ACK (command accepted)
-        assert_eq!(sio.get_byte_for_pokey(), Some(0x41));
+        // Tick to send bytes
+        for _ in 0..5 {
+            sio.tick(&mut bus);
+        }
+
+        // Should send ACK and Complete (command accepted)
+        let bytes = bus.get_pokey_bytes();
+        assert!(bytes.len() >= 1);
+        assert_eq!(bytes[0], 0x41);  // ACK
+    }
+
+    #[test]
+    fn test_instant_timing_processes_command_immediately() {
+        let mut sio = SioController::new();
+        let mut bus = MockSioBus::new();
+
+        bus.add_device(Box::new(MockDevice {
+            id: 0x31,
+            response: SioResponse::CompleteWithData(vec![0x10, 0xFF]),
+        }));
+
+        // Assert command line
+        bus.set_command_line(true);
+        sio.tick(&mut bus);
+        println!("After assert: {}", sio.state());
+
+        // Send command
+        sio.receive_byte(0x31);
+        sio.receive_byte(0x53);
+        sio.receive_byte(0x00);
+        sio.receive_byte(0x00);
+        sio.receive_byte(0x84);
+        println!("After bytes: {}", sio.state());
+
+        // Deassert command line - with instant timing, should immediately process
+        bus.set_command_line(false);
+        sio.tick(&mut bus);
+        println!("After deassert: {}", sio.state());
+
+        // Tick multiple times to send all bytes (instant timing = 0 cycles per byte)
+        for _ in 0..10 {
+            sio.tick(&mut bus);
+        }
+
+        // Check all bytes were sent in correct order
+        let bytes = bus.get_pokey_bytes();
+        assert!(bytes.len() >= 5, "Should have all bytes");
+        assert_eq!(bytes[0], 0x41); // ACK
+        assert_eq!(bytes[1], 0x43); // Complete
+        assert_eq!(bytes[2], 0x10); // Data
+        assert_eq!(bytes[3], 0xFF); // Data
+
+        // Checksum
+        let checksum = sio_checksum(&[0x43, 0x10, 0xFF]);
+        assert_eq!(bytes[4], checksum);
     }
 }

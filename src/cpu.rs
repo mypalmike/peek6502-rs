@@ -485,7 +485,10 @@ impl Cpu {
 
             // Check for IRQ at end of instruction (before starting next instruction)
             // IRQ is level-triggered (can be masked by the I flag)
-            if !self.i && bus.irq_asserted() {
+            let irq_line = bus.irq_asserted();
+            if !self.i && irq_line {
+                eprintln!("[CPU] IRQ serviced at PC=${:04X}, jumping to ${:04X}",
+                         self.pc, bus.read_word(0xFFFE));
                 self.irq(bus);
                 self.cycles_remaining = 6;  // 7 cycles total: 1 now + 6 remaining
                 return 1;

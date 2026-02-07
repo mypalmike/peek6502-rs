@@ -31,9 +31,15 @@ pub struct Pokey {
     timers: [u16; 4],   // Internal timer counters
     random_seed: u8,    // For random number generation
 
+    // Serial input state
+    serin_data_ready: bool, // Byte in SERIN waiting to trigger IRQ when enabled
+
     // Serial output state
-    serial_out_timer: u16,    // Countdown for serial output completion
-    serial_out_active: bool,  // Whether serial output is in progress
+    // Two-stage model: SEROUT register -> shift register
+    serout_pending: bool,      // Byte waiting in SEROUT to be loaded to shift register
+    serout_load_timer: u16,    // Cycles until SEROUT is loaded to shift register
+    shift_out_active: bool,    // Shift register is transmitting
+    shift_out_timer: u16,      // Cycles until shift register completes
 
     // Keyboard state
     last_key_code: u8,  // Last key code pressed (for change detection)
@@ -62,8 +68,11 @@ impl Pokey {
             skstat: 0xFF,  // All status bits high = keyboard ready, no errors
             timers: [0; 4],
             random_seed: 0xFF,
-            serial_out_timer: 0,
-            serial_out_active: false,
+            serin_data_ready: false,
+            serout_pending: false,
+            serout_load_timer: 0,
+            shift_out_active: false,
+            shift_out_timer: 0,
             last_key_code: 0xFF, // No key pressed initially
             shift_pressed: false,
             ctrl_pressed: false,
@@ -95,17 +104,53 @@ impl Pokey {
             }
         }
 
-        // Serial output timer
-        if self.serial_out_active {
-            if self.serial_out_timer > 0 {
-                self.serial_out_timer -= 1;
-            } else {
-                self.serial_out_active = false;
-                // Serial output transmission complete - clear IRQST bit 3
-                if (self.irqen & 0x08) != 0 {
-                    self.irqst &= !0x08;
+        // Serial output: two-stage model (SEROUT register -> shift register)
+        //
+        // Stage 1: SEROUT load timer - delay before byte loads into shift register
+        if self.serout_pending && self.serout_load_timer > 0 {
+            self.serout_load_timer -= 1;
+            if self.serout_load_timer == 0 {
+                // Load byte from SEROUT to shift register
+                self.serout_pending = false;
+                self.shift_out_active = true;
+                self.shift_out_timer = 930;  // ~10 bit cells at 19200 baud
+
+                // Assert SEROUT_NEED IRQ (bit 4) - SEROUT is now ready for next byte
+                if (self.irqen & 0x10) != 0 {
+                    self.irqst &= !0x10;
+                    eprintln!("[POKEY] SEROUT loaded to shift register, SEROUT_NEED IRQ fired");
                 }
             }
+        }
+
+        // Stage 2: Shift register transmitting
+        if self.shift_out_active {
+            if self.shift_out_timer > 0 {
+                self.shift_out_timer -= 1;
+            } else {
+                // Shift register finished
+                if self.serout_pending {
+                    // Another byte waiting - load it immediately (back-to-back transmission)
+                    self.serout_pending = false;
+                    self.shift_out_timer = 930;
+                    // Assert SEROUT_NEED IRQ (bit 4)
+                    if (self.irqen & 0x10) != 0 {
+                        self.irqst &= !0x10;
+                    }
+                } else {
+                    // No more bytes - shift register goes idle
+                    self.shift_out_active = false;
+                    eprintln!("[POKEY] Shift register idle");
+                }
+            }
+        }
+
+        // SEROUT_DONE (bit 3) is level-sensitive: asserted when shift register is idle
+        // Unlike other IRQs, it's not latched - directly reflects shift register state
+        if !self.shift_out_active && (self.irqen & 0x08) != 0 {
+            self.irqst &= !0x08;  // Assert SEROUT_DONE
+        } else {
+            self.irqst |= 0x08;   // Deassert SEROUT_DONE (shift register busy)
         }
 
         // Update random number generator (simple LFSR)
@@ -129,8 +174,26 @@ impl Pokey {
             0x08 => self.allpot,
             0x09 => self.kbcode,
             0x0A => self.random,
-            0x0D => self.serin,
-            0x0E => self.irqst,
+            0x0D => {
+                // Reading SERIN has NO side effects per hardware docs
+                // It does NOT clear the serial input IRQ
+                // The IRQ is cleared when the next byte STARTS arriving
+                eprintln!("[POKEY] OS read SERIN: ${:02X}", self.serin);
+                self.serin
+            }
+            0x0E => {
+                eprintln!("[POKEY] Read IRQST: ${:02X} (bits: {}{}{}{}{}{}{}{})",
+                         self.irqst,
+                         if self.irqst & 0x80 == 0 { "BREAK " } else { "" },
+                         if self.irqst & 0x40 == 0 { "KEY " } else { "" },
+                         if self.irqst & 0x20 == 0 { "SERIN " } else { "" },
+                         if self.irqst & 0x10 == 0 { "SEROUT_NEED " } else { "" },
+                         if self.irqst & 0x08 == 0 { "SEROUT_DONE " } else { "" },
+                         if self.irqst & 0x04 == 0 { "TMR4 " } else { "" },
+                         if self.irqst & 0x02 == 0 { "TMR2 " } else { "" },
+                         if self.irqst & 0x01 == 0 { "TMR1 " } else { "" });
+                self.irqst
+            }
             0x0F => self.skstat,
             _ => 0xFF,
         }
@@ -158,13 +221,27 @@ impl Pokey {
             0x0A => self.skrest = val,
             0x0B => self.potgo = val,
             0x0D => {
-                self.serout = val;
-                // Immediate: clear "output data needed" IRQ (bit 4)
-                if (self.irqen & 0x10) != 0 {
-                    self.irqst &= !0x10;
+                // Write to SEROUT register
+                // Per Altirra docs: only one byte can be pending in SEROUT
+                // If a second byte is written before the first loads, it replaces it
+                if self.serout_pending {
+                    eprintln!("[POKEY] SEROUT <= ${:02X} (replacing pending ${:02X})", val, self.serout);
+                } else {
+                    eprintln!("[POKEY] SEROUT <= ${:02X}", val);
                 }
-                self.serial_out_active = true;
-                self.serial_out_timer = 1000; // ~19200 baud approximation
+                self.serout = val;
+                self.serout_pending = true;
+
+                // Start the load timer (~1 bit cell = ~93 cycles at 19200 baud)
+                // This is the delay before byte loads from SEROUT to shift register
+                if !self.shift_out_active {
+                    // Shift register idle - start load timer
+                    self.serout_load_timer = 93;
+                }
+                // If shift register is active, byte will be loaded when current byte completes
+
+                // Clear SEROUT_NEED IRQ (bit 4 = 1) since we now have data pending
+                self.irqst |= 0x10;
             }
             0x0E => self.irqen = val,
             0x0F => self.skctl = val,
@@ -255,9 +332,21 @@ impl Pokey {
     pub fn write_irqen(&mut self, val: u8) -> bool {
         // For each bit that is being disabled (was 1, now 0), set corresponding IRQST bit to 1
         let newly_disabled = self.irqen & !val;  // Bits that were enabled, now disabled
+        let old_irqst = self.irqst;
         self.irqst |= newly_disabled;  // Set those IRQST bits to 1 (inactive)
 
+        eprintln!("[POKEY] Write IRQEN: ${:02X} (was ${:02X}), IRQST: ${:02X} → ${:02X}",
+                 val, self.irqen, old_irqst, self.irqst);
+        if val & 0x20 != 0 {
+            eprintln!("[POKEY]   Serial input IRQ ENABLED");
+        }
+
         self.irqen = val;
+
+        // Check if enabling serial input IRQ with data ready
+        // This handles the case where a byte arrived before the IRQ was enabled
+        self.try_trigger_serin_irq();
+
         self.irq_active()
     }
 
@@ -283,5 +372,48 @@ impl Pokey {
             }
         }
         false  // Don't assert IRQ
+    }
+
+    // ========================================================================
+    // Serial I/O Support (for SIO integration)
+    // ========================================================================
+
+    /// Queue a byte into SERIN register (from SIO device response)
+    ///
+    /// This simulates the complete reception of a byte from the SIO bus:
+    /// 1. The byte is loaded into SERIN
+    /// 2. serin_data_ready flag is set (byte waiting for IRQ)
+    /// 3. If serial input IRQ is enabled, trigger it immediately
+    /// 4. If not enabled, the IRQ will trigger when OS enables it later
+    ///
+    /// Per Altirra Hardware Manual:
+    /// - Reading SERIN has NO side effects (doesn't clear IRQ)
+    /// - The IRQ is cleared when the NEXT byte starts arriving (shift register active)
+    pub fn queue_serin_byte(&mut self, byte: u8) {
+        // Clear any previous pending IRQ (new byte arrival clears old)
+        self.irqst |= 0x20;  // Set bit 5 to 1 = no IRQ
+
+        // Load the new byte
+        eprintln!("[POKEY] SERIN <= ${:02X}", byte);
+        self.serin = byte;
+        self.serin_data_ready = true;
+
+        // Try to trigger IRQ (will only work if IRQEN bit 5 is set)
+        self.try_trigger_serin_irq();
+    }
+
+    /// Try to trigger SERIN IRQ if data is ready and IRQ is enabled
+    fn try_trigger_serin_irq(&mut self) {
+        if self.serin_data_ready && (self.irqen & 0x20) != 0 {
+            self.irqst &= !0x20;  // Clear bit 5 to trigger IRQ (active low)
+            self.serin_data_ready = false;  // IRQ consumed
+            eprintln!("[POKEY] Serial input IRQ triggered: IRQST=${:02X}", self.irqst);
+        }
+    }
+
+    /// Get the current SEROUT byte (for SIO controller to read)
+    /// This is called when the OS writes a byte to SEROUT that needs to be sent to SIO
+    pub fn get_serout_byte(&self) -> u8 {
+        self.serout
     }
 }

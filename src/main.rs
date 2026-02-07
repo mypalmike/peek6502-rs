@@ -23,6 +23,8 @@ fn print_help() {
     println!("    -f, --fullspeed         Run at maximum speed (no speed limiting)");
     println!("    --machine <type>        Machine type: 800, 800xl (default: 800)");
     println!("    --cart1 <file>          Load cartridge ROM (8KB or 16KB, raw or .car)");
+    println!("    --disk1 <file>          Attach disk image to D1: (.atr format)");
+    println!("    --disk2 <file>          Attach disk image to D2: (.atr format)");
     println!("    --keyboard <mode>       Keyboard mapping mode: physical|modern (default: modern)");
     println!("    --video-scaling <num>   Video window scaling factor (default: 2.0)");
     println!();
@@ -93,6 +95,15 @@ fn main() {
         .find(|w| w[0] == "--cart1")
         .map(|w| w[1].clone());
 
+    // Disk images
+    let disk1_path = args.windows(2)
+        .find(|w| w[0] == "--disk1")
+        .map(|w| w[1].clone());
+
+    let disk2_path = args.windows(2)
+        .find(|w| w[0] == "--disk2")
+        .map(|w| w[1].clone());
+
     // Keyboard mapping mode (default: modern)
     let keyboard_mode = args.windows(2)
         .find(|w| w[0] == "--keyboard")
@@ -129,17 +140,23 @@ fn main() {
         println!("  open atari800_output.png");
     } else if debugger_mode {
         // Run with SDL display and debugger enabled
-        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling, true);
+        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(),
+                     disk1_path.as_deref(), disk2_path.as_deref(),
+                     keyboard_mode, video_scaling, true);
     } else if animate_mode {
         // Run color cycling animation test
         run_animated_test(machine_type, video_scaling);
     } else {
         // Run with SDL display and CPU execution (default)
-        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(), keyboard_mode, video_scaling, false);
+        run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(),
+                     disk1_path.as_deref(), disk2_path.as_deref(),
+                     keyboard_mode, video_scaling, false);
     }
 }
 
-fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>, keyboard_mode: &str, video_scaling: f64, debug_mode: bool) {
+fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>,
+                disk1_path: Option<&str>, disk2_path: Option<&str>,
+                keyboard_mode: &str, video_scaling: f64, debug_mode: bool) {
     // Create keyboard mapper based on mode
     let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
         "physical" => Box::new(input::PhysicalMapper),
@@ -173,6 +190,27 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
 
     // Create Atari800 instance
     let mut atari800 = Atari800::with_config(machine_type, cart_path);
+
+    // Attach disk drives
+    if let Some(path) = disk1_path {
+        match atari800_rs::atrdisk::AtrDisk::new(path, 0x31) {
+            Ok(disk) => {
+                println!("Loaded D1: {}", path);
+                atari800.add_sio_device(Box::new(disk));
+            }
+            Err(e) => eprintln!("Error loading D1: {}: {}", path, e),
+        }
+    }
+
+    if let Some(path) = disk2_path {
+        match atari800_rs::atrdisk::AtrDisk::new(path, 0x32) {
+            Ok(disk) => {
+                println!("Loaded D2: {}", path);
+                atari800.add_sio_device(Box::new(disk));
+            }
+            Err(e) => eprintln!("Error loading D2: {}: {}", path, e),
+        }
+    }
 
     // Enable debugger if requested
     if debug_mode {

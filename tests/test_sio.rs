@@ -739,20 +739,50 @@ fn test_full_command_timing() {
 fn test_pia_cb2_controls_sio_command_line() {
     use atari800_rs::pia::Pia;
     use atari800_rs::sio::SioController;
+    use atari800_rs::sio_bus::SioBus;
+    use atari800_rs::sio::{SioTiming, SioResponse};
 
-    let mut pia = Pia::new();
+    // Mock SIO bus for testing
+    struct MockSioBus {
+        pia: Pia,
+        timing: SioTiming,
+    }
+
+    impl SioBus for MockSioBus {
+        fn get_command_line(&self) -> bool {
+            self.pia.get_cb2_output()
+        }
+
+        fn route_sio_command(&mut self, _device_id: u8, _cmd: u8, _aux1: u8, _aux2: u8) -> SioResponse {
+            SioResponse::Nak
+        }
+
+        fn has_sio_device(&self, _device_id: u8) -> bool {
+            false
+        }
+
+        fn send_byte_to_pokey(&mut self, _byte: u8) {}
+
+        fn get_sio_timing(&self) -> &SioTiming {
+            &self.timing
+        }
+    }
+
+    let mut bus = MockSioBus {
+        pia: Pia::new(),
+        timing: SioTiming::instant(),
+    };
     let mut sio = SioController::new();
 
     // Initially, CB2 should be low (PBCTL bit 3 = 0)
-    assert_eq!(pia.get_cb2_output(), false);
+    assert_eq!(bus.pia.get_cb2_output(), false);
 
     // CPU writes to PBCTL ($D303) to assert command line (set bit 3)
-    pia.write_register(0xD303, 0x08);
+    bus.pia.write_register(0xD303, 0x08);
 
-    // Read CB2 state and pass to SIO controller
-    let command_line = pia.get_cb2_output();
-    assert_eq!(command_line, true);
-    sio.set_command_line(command_line);
+    // Read CB2 state via tick
+    assert_eq!(bus.get_command_line(), true);
+    sio.tick(&mut bus);
 
     // SIO should now be ready to receive command bytes
     // (State should transition from Idle to ReceivingCommand)
@@ -763,6 +793,7 @@ fn test_pia_cb2_controls_sio_command_line() {
 fn test_full_command_sequence_via_pia() {
     use atari800_rs::pia::Pia;
     use atari800_rs::sio::{SioController, SioDevice, SioResponse, SioTiming};
+    use atari800_rs::sio_bus::SioBus;
 
     // Mock device for testing
     struct MockDisk {
@@ -782,15 +813,51 @@ fn test_full_command_sequence_via_pia() {
         }
     }
 
-    let mut pia = Pia::new();
-    let mut sio = SioController::with_timing(SioTiming::instant());
+    // Mock SIO bus with device
+    struct MockSioBus {
+        pia: Pia,
+        timing: SioTiming,
+        device: MockDisk,
+        pokey_bytes: Vec<u8>,
+    }
 
-    // Add a mock disk drive (D1:)
-    sio.add_device(Box::new(MockDisk { id: 0x31 }));
+    impl SioBus for MockSioBus {
+        fn get_command_line(&self) -> bool {
+            self.pia.get_cb2_output()
+        }
+
+        fn route_sio_command(&mut self, device_id: u8, cmd: u8, aux1: u8, aux2: u8) -> SioResponse {
+            if self.device.accepts_device_id(device_id) {
+                self.device.handle_command(cmd, aux1, aux2)
+            } else {
+                SioResponse::Nak
+            }
+        }
+
+        fn has_sio_device(&self, device_id: u8) -> bool {
+            self.device.accepts_device_id(device_id)
+        }
+
+        fn send_byte_to_pokey(&mut self, byte: u8) {
+            self.pokey_bytes.push(byte);
+        }
+
+        fn get_sio_timing(&self) -> &SioTiming {
+            &self.timing
+        }
+    }
+
+    let mut bus = MockSioBus {
+        pia: Pia::new(),
+        timing: SioTiming::instant(),
+        device: MockDisk { id: 0x31 },
+        pokey_bytes: Vec::new(),
+    };
+    let mut sio = SioController::new();
 
     // Step 1: CPU asserts COMMAND line via PIA
-    pia.write_register(0xD303, 0x08); // Set PBCTL bit 3
-    sio.set_command_line(pia.get_cb2_output());
+    bus.pia.write_register(0xD303, 0x08); // Set PBCTL bit 3
+    sio.tick(&mut bus);  // Detect rising edge
 
     // Step 2: CPU sends 5-byte command frame via POKEY serial port
     // (simulated here by directly calling receive_byte)
@@ -800,37 +867,32 @@ fn test_full_command_sequence_via_pia() {
         sio.receive_byte(byte);
     }
 
-    // Step 3: CPU deasserts COMMAND line
-    pia.write_register(0xD303, 0x00); // Clear PBCTL bit 3
-    sio.set_command_line(pia.get_cb2_output());
+    // Step 3: CPU deasserts COMMAND line (mode 6 = output low = 0x30)
+    bus.pia.write_register(0xD303, 0x30); // Set CB2 to output low
+    sio.tick(&mut bus);  // Detect falling edge and process command (instant timing)
 
-    // Step 4: SIO should send ACK
-    assert!(sio.has_byte_for_pokey());
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x41)); // ACK
-
-    // Step 5: Tick to execute command
-    while !sio.has_byte_for_pokey() {
-        sio.tick();
+    // Step 4-7: Tick multiple times to send all bytes (instant timing = 0 cycles per byte)
+    for _ in 0..10 {
+        sio.tick(&mut bus);
     }
 
-    // Step 6: SIO should send Complete byte
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x43)); // Complete
-
-    // Step 7: SIO should send data bytes
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x10));
-    assert_eq!(sio.get_byte_for_pokey(), Some(0xFF));
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x60));
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x00));
-
-    // Step 8: SIO should send checksum
-    assert!(sio.has_byte_for_pokey());
-    let _checksum = sio.get_byte_for_pokey();
+    // Check all bytes were sent to POKEY in correct order
+    let bytes = &bus.pokey_bytes;
+    assert!(bytes.len() >= 7, "Should have all 7 bytes");
+    assert_eq!(bytes[0], 0x41); // ACK
+    assert_eq!(bytes[1], 0x43); // Complete
+    assert_eq!(bytes[2], 0x10); // Data
+    assert_eq!(bytes[3], 0xFF); // Data
+    assert_eq!(bytes[4], 0x60); // Data
+    assert_eq!(bytes[5], 0x00); // Data
+    // bytes[6] is checksum
 }
 
 #[test]
 fn test_pia_command_line_must_deassert_before_response() {
     use atari800_rs::pia::Pia;
     use atari800_rs::sio::{SioController, SioDevice, SioResponse, SioTiming};
+    use atari800_rs::sio_bus::SioBus;
 
     struct MockDevice;
     impl SioDevice for MockDevice {
@@ -840,13 +902,51 @@ fn test_pia_command_line_must_deassert_before_response() {
         }
     }
 
-    let mut pia = Pia::new();
-    let mut sio = SioController::with_timing(SioTiming::instant());
-    sio.add_device(Box::new(MockDevice));
+    // Mock SIO bus with device
+    struct MockSioBus {
+        pia: Pia,
+        timing: SioTiming,
+        device: MockDevice,
+        pokey_bytes: Vec<u8>,
+    }
+
+    impl SioBus for MockSioBus {
+        fn get_command_line(&self) -> bool {
+            self.pia.get_cb2_output()
+        }
+
+        fn route_sio_command(&mut self, device_id: u8, cmd: u8, aux1: u8, aux2: u8) -> SioResponse {
+            if self.device.accepts_device_id(device_id) {
+                self.device.handle_command(cmd, aux1, aux2)
+            } else {
+                SioResponse::Nak
+            }
+        }
+
+        fn has_sio_device(&self, device_id: u8) -> bool {
+            self.device.accepts_device_id(device_id)
+        }
+
+        fn send_byte_to_pokey(&mut self, byte: u8) {
+            self.pokey_bytes.push(byte);
+        }
+
+        fn get_sio_timing(&self) -> &SioTiming {
+            &self.timing
+        }
+    }
+
+    let mut bus = MockSioBus {
+        pia: Pia::new(),
+        timing: SioTiming::instant(),
+        device: MockDevice,
+        pokey_bytes: Vec::new(),
+    };
+    let mut sio = SioController::new();
 
     // Assert command line
-    pia.write_register(0xD303, 0x08);
-    sio.set_command_line(pia.get_cb2_output());
+    bus.pia.write_register(0xD303, 0x08);
+    sio.tick(&mut bus);
 
     // Send command frame
     // Checksum = $31 + $53 + $00 + $00 = $84 (matches AltirraOS)
@@ -857,13 +957,18 @@ fn test_pia_command_line_must_deassert_before_response() {
     // Command frame complete, but COMMAND line still asserted
     // SIO should be waiting for command line to deassert
     assert!(sio.state().contains("WaitingForCommandLineDeassert"));
-    assert!(!sio.has_byte_for_pokey()); // No response yet
+    assert!(bus.pokey_bytes.is_empty()); // No response yet
 
-    // Now deassert command line
-    pia.write_register(0xD303, 0x00);
-    sio.set_command_line(pia.get_cb2_output());
+    // Now deassert command line (mode 6 = output low = 0b110000 = 0x30)
+    bus.pia.write_register(0xD303, 0x30);
+    sio.tick(&mut bus);  // Detect falling edge and process command
 
-    // Now SIO should send ACK
-    assert!(sio.has_byte_for_pokey());
-    assert_eq!(sio.get_byte_for_pokey(), Some(0x41));
+    // Tick multiple times to send bytes
+    for _ in 0..5 {
+        sio.tick(&mut bus);
+    }
+
+    // Now SIO should have sent ACK
+    assert!(!bus.pokey_bytes.is_empty());
+    assert_eq!(bus.pokey_bytes[0], 0x41);
 }

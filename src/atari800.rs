@@ -13,6 +13,9 @@ use crate::banking::{BankController, BankingScheme};
 use crate::rom_overlay::RomOverlayController;
 use crate::machine_config::{MachineConfig, MachineType};
 use crate::rom_scanner::RomDatabase;
+use crate::sio::{SioController, SioDevice, SioTiming};
+use crate::sio_bus::SioBus;
+use crate::patch::PatchManager;
 
 pub struct Atari800 {
     // Core components
@@ -32,6 +35,14 @@ pub struct Atari800 {
 
     // Input devices
     joystick: Box<dyn JoystickInput>,
+
+    // Serial I/O
+    sio_controller: SioController,
+    sio_devices: Vec<Box<dyn SioDevice>>,
+    sio_timing: SioTiming,
+
+    // OS Patching (SIO patch, etc.)
+    patch_manager: PatchManager,
 
     // Debugger
     debugger: Debugger,
@@ -60,12 +71,40 @@ impl Atari800 {
     /// Create a minimal Atari800 for render/animation tests
     /// No CPU execution, no OS ROM, no banking - just ANTIC/GTIA testing
     pub fn for_render_test() -> Atari800 {
-        // Simple memory map - just 64KB RAM, no ROMs
+        // Simple memory map - RAM plus I/O regions
         let mut memory_map = MemoryMap::new();
+
+        // Base RAM
         memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
             0x0000,
             0xFFFF,
             0,
+        )));
+
+        // I/O regions (overlay RAM)
+        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+            0xD000,
+            0xD0FF,
+            ChipType::Gtia,
+            100,
+        )));
+        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+            0xD200,
+            0xD2FF,
+            ChipType::Pokey,
+            100,
+        )));
+        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+            0xD300,
+            0xD3FF,
+            ChipType::Pia,
+            100,
+        )));
+        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+            0xD400,
+            0xD4FF,
+            ChipType::Antic,
+            100,
         )));
 
         // No banking or ROM overlays needed for tests
@@ -95,6 +134,10 @@ impl Atari800 {
             pokey: Pokey::new(),
             pia: Pia::new(),
             joystick: Box::new(KeyboardJoystick::new()),
+            sio_controller: SioController::new(),
+            sio_devices: Vec::new(),
+            sio_timing: SioTiming::default(),
+            patch_manager: PatchManager::new(),  // No patches for render tests
             debugger: Debugger::new(),
             master_cycle: 0,
             cpu_halted: false,
@@ -289,6 +332,14 @@ impl Atari800 {
             pokey: Pokey::new(),
             pia: Pia::new(),
             joystick: Box::new(KeyboardJoystick::new()),
+            sio_controller: SioController::new(),
+            sio_devices: Vec::new(),
+            sio_timing: SioTiming::default(),
+            patch_manager: {
+                let mut pm = PatchManager::new();
+                crate::patch::register_standard_patches(&mut pm);
+                pm
+            },
             debugger: Debugger::new(),
             master_cycle: 0,
             cpu_halted: false,
@@ -423,6 +474,39 @@ impl Atari800 {
         println!("Loaded XEX from {} ({} segments)", path, segment_count);
     }
 
+    // ========================================================================
+    // SIO Methods
+    // ========================================================================
+
+    /// Add an SIO device (disk drive, printer, modem, etc.)
+    pub fn add_sio_device(&mut self, device: Box<dyn SioDevice>) {
+        self.sio_devices.push(device);
+    }
+
+    /// Enable SIO debug logging
+    pub fn enable_sio_debug(&mut self) {
+        self.sio_controller.enable_debug();
+    }
+
+    /// Tick the SIO controller for one machine cycle
+    /// This uses the sequential borrowing pattern like tick() for the CPU
+    /// SIO controller handles byte pacing internally - sends one byte per timing interval
+    pub fn tick_sio(&mut self) {
+        // Take temporary ownership of SioController (like we do with CPU)
+        let mut sio = std::mem::take(&mut self.sio_controller);
+
+        // Pass self as SioBus (like CPU uses self as Bus)
+        // SIO tick() now handles byte pacing and sends bytes to POKEY internally
+        sio.tick(self);
+
+        // Return ownership
+        self.sio_controller = sio;
+    }
+
+    // ========================================================================
+    // Debug Methods
+    // ========================================================================
+
     /// Enable GDB-style debug mode
     pub fn enable_debug_mode(&mut self) {
         let initial_pc = self.cpu.pc;
@@ -454,12 +538,30 @@ impl Atari800 {
 
         // Execute CPU for one scanline worth of cycles
         while cycles_this_scanline < CYCLES_PER_SCANLINE {
+            // Check for OS patches before executing CPU instruction
+            // We need to temporarily restore cpu to self for patch execution
+            if self.patch_manager.has_patch(cpu.pc) {
+                self.cpu = cpu;
+                if self.check_and_execute_patch() {
+                    // Patch handled the operation, take CPU back and continue
+                    cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+                    cycles_this_scanline += 1;
+                    continue;
+                }
+                // Patch didn't handle, take CPU back for normal execution
+                cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+            }
+
             // Execute one CPU cycle
             cpu.tick(self);
             cycles_this_scanline += 1;
 
             // Tick POKEY for this cycle
             self.pokey.tick();
+
+            // Tick SIO for this cycle
+            // This handles command line monitoring and byte transfers
+            self.tick_sio();
         }
 
         // Restore CPU
@@ -873,6 +975,14 @@ impl Bus for Atari800 {
                                 // IRQ state will be checked directly via irq_asserted()
                             } else {
                                 self.pokey.write_register(addr, val);
+
+                                // Forward SEROUT ($D20D) writes to SIO controller
+                                // Data path: OS → POKEY SEROUT → SIO controller
+                                if (addr & 0x0F) == 0x0D {
+                                    let mut sio = std::mem::take(&mut self.sio_controller);
+                                    sio.receive_byte(val);
+                                    self.sio_controller = sio;
+                                }
                             }
                         }
                         ChipType::Pia => {
@@ -920,6 +1030,201 @@ impl Bus for Atari800 {
         // Directly check all IRQ sources - no caching
         // POKEY: keyboard, timers, serial I/O interrupts
         // PIA: proceed line and interrupt line (via PACTL/PBCTL bit 7)
-        self.pokey.irq_active() || self.pia.irq_active()
+        let pokey_irq = self.pokey.irq_active();
+        let pia_irq = self.pia.irq_active();
+        let result = pokey_irq || pia_irq;
+
+        if result {
+            eprintln!("[BUS] IRQ asserted: pokey={}, pia={}", pokey_irq, pia_irq);
+        }
+
+        result
+    }
+}
+
+// ============================================================================
+// SIO Bus Implementation
+// ============================================================================
+
+impl SioBus for Atari800 {
+    fn get_command_line(&self) -> bool {
+        // Command line is controlled by PIA CB2 (Port B Control bit 2)
+        // CB2 output state directly maps to SIO command line
+        self.pia.get_cb2_output()
+    }
+
+    fn route_sio_command(&mut self, device_id: u8, cmd: u8, aux1: u8, aux2: u8) -> crate::sio::SioResponse {
+        // Find matching device and route command
+        for device in &mut self.sio_devices {
+            if device.accepts_device_id(device_id) {
+                return device.handle_command(cmd, aux1, aux2);
+            }
+        }
+
+        // No device found - return NAK
+        crate::sio::SioResponse::Nak
+    }
+
+    fn has_sio_device(&self, device_id: u8) -> bool {
+        self.sio_devices.iter().any(|d| d.accepts_device_id(device_id))
+    }
+
+    fn send_byte_to_pokey(&mut self, byte: u8) {
+        // Queue byte in POKEY SERIN register
+        // This triggers serial input ready IRQ if enabled
+        self.pokey.queue_serin_byte(byte);
+    }
+
+    fn get_sio_timing(&self) -> &SioTiming {
+        &self.sio_timing
+    }
+}
+
+// ============================================================================
+// OS Patching Support
+// ============================================================================
+
+impl Atari800 {
+    /// Check if there's a patch at the current PC and execute it
+    /// Returns true if a patch was executed and handled the operation
+    pub fn check_and_execute_patch(&mut self) -> bool {
+        let pc = self.cpu.pc;
+
+        if !self.patch_manager.has_patch(pc) {
+            return false;
+        }
+
+        // Execute the appropriate patch based on PC
+        match pc {
+            0xE459 => {
+                // SIOV patch - returns true if handled
+                self.execute_siov_patch()
+            }
+            _ => false,
+        }
+    }
+
+    /// Execute the SIOV patch directly
+    /// This reads the DCB, performs disk I/O, and sets CPU state
+    /// Returns true if the patch handled the operation, false if it should fall through
+    fn execute_siov_patch(&mut self) -> bool {
+        use crate::patch::{dcb, sio_status};
+
+        // Read Device Control Block from memory
+        let device = self.read(dcb::DDEVIC);
+        let _unit = self.read(dcb::DUNIT);
+        let command = self.read(dcb::DCOMND);
+        let buffer = self.read_word(dcb::DBUFLO);
+        let length = self.read_word(dcb::DBYTLO);
+        let aux1 = self.read(dcb::DAUX1);
+        let aux2 = self.read(dcb::DAUX2);
+        let sector = (aux2 as u16) << 8 | (aux1 as u16);
+
+        // Only handle disk devices ($31-$38 = D1:-D8:)
+        if device < 0x31 || device > 0x38 {
+            // Not a disk device - let original code handle it
+            return false;
+        }
+
+        let disk_unit = device - 0x31;
+
+        eprintln!("[PATCH] SIOV: dev=${:02X} unit={} cmd=${:02X} sector={} buf=${:04X} len={}",
+                  device, disk_unit + 1, command, sector, buffer, length);
+
+        // Find the disk device and perform operation
+        let device_id = device;
+        let mut status = 0u8;
+        let mut data: Option<Vec<u8>> = None;
+
+        for dev in &mut self.sio_devices {
+            if dev.accepts_device_id(device_id) {
+                let response = dev.handle_command(command, aux1, aux2);
+
+                match response {
+                    crate::sio::SioResponse::Complete => {
+                        status = b'C';
+                    }
+                    crate::sio::SioResponse::CompleteWithData(d) => {
+                        status = b'C';
+                        data = Some(d);
+                    }
+                    crate::sio::SioResponse::Error => {
+                        status = b'E';
+                    }
+                    crate::sio::SioResponse::ErrorWithData(d) => {
+                        status = b'E';
+                        data = Some(d);
+                    }
+                    crate::sio::SioResponse::Nak => {
+                        status = b'N';
+                    }
+                    crate::sio::SioResponse::Ack => {
+                        status = b'C';
+                    }
+                }
+                break;
+            }
+        }
+
+        // Copy data to buffer if operation returned data
+        if let Some(bytes) = data {
+            for (i, &byte) in bytes.iter().enumerate() {
+                if i < length as usize {
+                    self.write(buffer.wrapping_add(i as u16), byte);
+                }
+            }
+        }
+
+        // Set CPU state based on result
+        match status {
+            b'C' => {
+                self.cpu.y = sio_status::SUCCESS;
+                self.cpu.n = false;
+            }
+            b'E' => {
+                self.cpu.y = sio_status::DERROR;
+                self.cpu.n = true;
+            }
+            b'N' => {
+                self.cpu.y = sio_status::DNACK;
+                self.cpu.n = true;
+            }
+            _ => {
+                self.cpu.y = sio_status::TIMEOUT;
+                self.cpu.n = true;
+            }
+        }
+
+        // Store status in DSTATS
+        self.write(dcb::DSTATS, self.cpu.y);
+
+        // Clear A, set carry (like reference)
+        self.cpu.a = 0;
+        self.cpu.c = true;
+
+        // Return from subroutine (pull return address from stack, add 1)
+        let s = self.cpu.s;
+        let lo = self.read(0x0100 | (s.wrapping_add(1) as u16));
+        let hi = self.read(0x0100 | (s.wrapping_add(2) as u16));
+        self.cpu.s = s.wrapping_add(2);
+        let ret_addr = ((hi as u16) << 8) | (lo as u16);
+        self.cpu.pc = ret_addr.wrapping_add(1);
+
+        eprintln!("[PATCH] SIOV complete: Y=${:02X} N={} returning to ${:04X}",
+                  self.cpu.y, self.cpu.n, self.cpu.pc);
+
+        true
+    }
+
+    /// Enable or disable the SIO patch
+    pub fn set_sio_patch_enabled(&mut self, enabled: bool) {
+        self.patch_manager.set_patch_enabled(0xE459, enabled);
+        eprintln!("[PATCH] SIO patch {}", if enabled { "enabled" } else { "disabled" });
+    }
+
+    /// Enable or disable all patches
+    pub fn set_all_patches_enabled(&mut self, enabled: bool) {
+        self.patch_manager.set_all_enabled(enabled);
+        eprintln!("[PATCH] All patches {}", if enabled { "enabled" } else { "disabled" });
     }
 }

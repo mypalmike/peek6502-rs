@@ -18,4 +18,6 @@ pub mod rom_overlay;  // ROM overlays for 800XL/130XE
 pub mod machine_config;
 pub mod rom_scanner;
 pub mod sio;  // Serial I/O controller
+pub mod sio_bus;  // Serial I/O bus abstraction
 pub mod atrdisk;  // ATR disk image handler
+pub mod patch;  // OS patching facility (SIO patch, etc.)
