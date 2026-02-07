@@ -261,9 +261,6 @@ pub fn siov_patch_handler(ctx: &mut dyn PatchContext, env: &mut dyn PatchEnv) ->
     // The disk unit is 0-based internally
     let disk_unit = device - 0x31;
 
-    eprintln!("[PATCH] SIOV: dev=${:02X} unit={} cmd=${:02X} sector={} buf=${:04X} len={}",
-              device, disk_unit + 1, command, sector, buffer, length);
-
     // Perform the operation via the environment
     let (status, data) = env.sio_disk_operation(disk_unit, command, sector, buffer, length, aux1, aux2);
 

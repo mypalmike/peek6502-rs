@@ -71,15 +71,8 @@ impl SioDevice for AtrDisk {
     fn handle_command(&mut self, cmd: u8, aux1: u8, aux2: u8) -> SioResponse {
         match cmd {
             0x53 => self.get_status(),
-            0x52 => {
-                let sector = aux1 as u16 | ((aux2 as u16) << 8);
-                eprintln!("ATR: Reading sector {} from device ${:02X}", sector, self.device_id);
-                self.read_sector(aux1, aux2)
-            }
-            _ => {
-                eprintln!("ATR: Unsupported command ${:02X}", cmd);
-                SioResponse::Nak
-            }
+            0x52 => self.read_sector(aux1, aux2),
+            _ => SioResponse::Nak
         }
     }
 
@@ -109,9 +102,6 @@ impl AtrDisk {
             0x60,           // Format timeout (bit 7 = 0)
             0x00,           // Unused
         ];
-
-        eprintln!("ATR: Status data: {:02X} {:02X} {:02X} {:02X}",
-                  status_data[0], status_data[1], status_data[2], status_data[3]);
 
         SioResponse::CompleteWithData(status_data)
     }

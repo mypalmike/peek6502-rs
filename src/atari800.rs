@@ -298,9 +298,6 @@ impl Atari800 {
                     os_combined.extend_from_slice(&vec![0xFF; 0x800]); // Pad $D000-$D7FF (I/O hole)
                     os_combined.extend_from_slice(&os_high);
 
-                    eprintln!("[800XL] Loaded OS ROM: low={}KB, selftest={}KB, high={}KB",
-                        os_low.len() / 1024, selftest.len() / 1024, os_high.len() / 1024);
-
                     rom_overlay.set_os_rom(os_combined);
                     rom_overlay.set_selftest_rom(selftest);
                 } else {
@@ -1030,15 +1027,7 @@ impl Bus for Atari800 {
         // Directly check all IRQ sources - no caching
         // POKEY: keyboard, timers, serial I/O interrupts
         // PIA: proceed line and interrupt line (via PACTL/PBCTL bit 7)
-        let pokey_irq = self.pokey.irq_active();
-        let pia_irq = self.pia.irq_active();
-        let result = pokey_irq || pia_irq;
-
-        if result {
-            eprintln!("[BUS] IRQ asserted: pokey={}, pia={}", pokey_irq, pia_irq);
-        }
-
-        result
+        self.pokey.irq_active() || self.pia.irq_active()
     }
 }
 
@@ -1118,18 +1107,13 @@ impl Atari800 {
         let length = self.read_word(dcb::DBYTLO);
         let aux1 = self.read(dcb::DAUX1);
         let aux2 = self.read(dcb::DAUX2);
-        let sector = (aux2 as u16) << 8 | (aux1 as u16);
+        let _sector = (aux2 as u16) << 8 | (aux1 as u16);
 
         // Only handle disk devices ($31-$38 = D1:-D8:)
         if device < 0x31 || device > 0x38 {
             // Not a disk device - let original code handle it
             return false;
         }
-
-        let disk_unit = device - 0x31;
-
-        eprintln!("[PATCH] SIOV: dev=${:02X} unit={} cmd=${:02X} sector={} buf=${:04X} len={}",
-                  device, disk_unit + 1, command, sector, buffer, length);
 
         // Find the disk device and perform operation
         let device_id = device;
@@ -1210,21 +1194,16 @@ impl Atari800 {
         let ret_addr = ((hi as u16) << 8) | (lo as u16);
         self.cpu.pc = ret_addr.wrapping_add(1);
 
-        eprintln!("[PATCH] SIOV complete: Y=${:02X} N={} returning to ${:04X}",
-                  self.cpu.y, self.cpu.n, self.cpu.pc);
-
         true
     }
 
     /// Enable or disable the SIO patch
     pub fn set_sio_patch_enabled(&mut self, enabled: bool) {
         self.patch_manager.set_patch_enabled(0xE459, enabled);
-        eprintln!("[PATCH] SIO patch {}", if enabled { "enabled" } else { "disabled" });
     }
 
     /// Enable or disable all patches
     pub fn set_all_patches_enabled(&mut self, enabled: bool) {
         self.patch_manager.set_all_enabled(enabled);
-        eprintln!("[PATCH] All patches {}", if enabled { "enabled" } else { "disabled" });
     }
 }

@@ -110,33 +110,11 @@ impl Pia {
             }
             0x03 => {
                 // Write PBCTL (bits 7,6 are read-only IRQ flags)
-                let old_cb2 = self.cb2_output;
                 self.pbctl = (self.pbctl & 0xC0) | (val & 0x3F);
 
                 // PBCTL bits 5-3 control CB2 mode
-                // Only modes 6 and 7 are output modes:
-                //   Mode 6 (110): Output low
-                //   Mode 7 (111): Output high
-                // Modes 0-5 are input/interrupt modes - CB2 should be low (not driven)
-                let cb2_mode = (val >> 3) & 0x07;
-                match cb2_mode {
-                    7 => {
-                        // Mode 7: Output high (assert command line)
-                        self.cb2_output = true;
-                    }
-                    _ => {
-                        // Modes 0-6: Output low or input (deassert/not driven)
-                        self.cb2_output = false;
-                    }
-                }
-
-                // Log CB2 (SIO command line) changes
-                if self.cb2_output != old_cb2 {
-                    eprintln!("[PIA] PBCTL=${:02X} mode={}, CB2 (command line) {} → {}",
-                             val, cb2_mode,
-                             if old_cb2 { "HIGH" } else { "LOW" },
-                             if self.cb2_output { "HIGH (assert)" } else { "LOW (deassert)" });
-                }
+                // Only mode 7 outputs high - all others output low or are input modes
+                self.cb2_output = ((val >> 3) & 0x07) == 7;
             }
             _ => {}
         }

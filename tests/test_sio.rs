@@ -774,11 +774,11 @@ fn test_pia_cb2_controls_sio_command_line() {
     };
     let mut sio = SioController::new();
 
-    // Initially, CB2 should be low (PBCTL bit 3 = 0)
+    // Initially, CB2 should be low (mode 0 = input mode)
     assert_eq!(bus.pia.get_cb2_output(), false);
 
-    // CPU writes to PBCTL ($D303) to assert command line (set bit 3)
-    bus.pia.write_register(0xD303, 0x08);
+    // CPU writes to PBCTL ($D303) to assert command line (mode 7 = output high)
+    bus.pia.write_register(0xD303, 0x38);  // Bits 5-3 = 111 = mode 7
 
     // Read CB2 state via tick
     assert_eq!(bus.get_command_line(), true);
@@ -856,7 +856,7 @@ fn test_full_command_sequence_via_pia() {
     let mut sio = SioController::new();
 
     // Step 1: CPU asserts COMMAND line via PIA
-    bus.pia.write_register(0xD303, 0x08); // Set PBCTL bit 3
+    bus.pia.write_register(0xD303, 0x38); // Set PBCTL bit 3
     sio.tick(&mut bus);  // Detect rising edge
 
     // Step 2: CPU sends 5-byte command frame via POKEY serial port
@@ -945,7 +945,7 @@ fn test_pia_command_line_must_deassert_before_response() {
     let mut sio = SioController::new();
 
     // Assert command line
-    bus.pia.write_register(0xD303, 0x08);
+    bus.pia.write_register(0xD303, 0x38);
     sio.tick(&mut bus);
 
     // Send command frame
