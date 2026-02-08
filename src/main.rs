@@ -1,4 +1,8 @@
 use atari800_rs::atari800::Atari800;
+use atari800_rs::command::Command;
+use atari800_rs::command_executor::{execute, ExecutionContext};
+use atari800_rs::console::{Console, ConsoleKey};
+use atari800_rs::http_api::HttpApi;
 use atari800_rs::machine_config::MachineType;
 use atari800_rs::functional_test::FunctionalTest;
 use atari800_rs::input;
@@ -27,6 +31,8 @@ fn print_help() {
     println!("    --disk2 <file>          Attach disk image to D2: (.atr format)");
     println!("    --keyboard <mode>       Keyboard mapping mode: physical|modern (default: modern)");
     println!("    --video-scaling <num>   Video window scaling factor (default: 2.0)");
+    println!("    --api [host:port]       HTTP API address (default: 127.0.0.1:8765)");
+    println!("    --no-api                Disable HTTP API");
     println!();
     println!("KEYBOARD MODES:");
     println!("    --keyboard=modern (default)");
@@ -38,6 +44,10 @@ fn print_help() {
     println!("        Maps by physical key position - host keys map to Atari key positions.");
     println!("        Use if you have an Atari-layout keyboard or want physical mapping.");
     println!("        CapsLock acts as Ctrl in this mode.");
+    println!();
+    println!("CONSOLE:");
+    println!("    Press backtick (`) to toggle the in-emulator console.");
+    println!("    Type 'help' for available commands.");
     println!();
     println!("SPEED LIMITING:");
     println!("    By default, the emulator runs at authentic Atari 800 speed:");
@@ -55,6 +65,7 @@ fn print_help() {
     println!("    atari800-rs --video-scaling 3.0        # Use 3x window scaling (960x576)");
     println!("    atari800-rs --test                     # Run functional tests (full speed)");
     println!("    atari800-rs --animate                  # Run animation demo");
+    println!("    atari800-rs --api 0.0.0.0:8765         # Listen on all interfaces");
 }
 
 fn main() {
@@ -116,6 +127,19 @@ fn main() {
         .and_then(|w| w[1].parse::<f64>().ok())
         .unwrap_or(2.0);
 
+    // HTTP API configuration
+    let no_api = args.iter().any(|arg| arg == "--no-api");
+    let api_addr = if no_api {
+        None
+    } else {
+        Some(
+            args.windows(2)
+                .find(|w| w[0] == "--api")
+                .map(|w| w[1].clone())
+                .unwrap_or_else(|| "127.0.0.1:8765".to_string()),
+        )
+    };
+
     if run_functional_test {
         // Run the 6502 functional test suite
         let mut test = FunctionalTest::new();
@@ -130,8 +154,8 @@ fn main() {
 
         // Save as PPM image
         match atari800.save_framebuffer("atari800_output.ppm") {
-            Ok(_) => println!("✓ Saved framebuffer to atari800_output.ppm"),
-            Err(e) => println!("✗ Error saving framebuffer: {}", e),
+            Ok(_) => println!("Saved framebuffer to atari800_output.ppm"),
+            Err(e) => println!("Error saving framebuffer: {}", e),
         }
 
         // Convert to PNG using ImageMagick if available
@@ -142,7 +166,7 @@ fn main() {
         // Run with SDL display and debugger enabled
         run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(),
                      disk1_path.as_deref(), disk2_path.as_deref(),
-                     keyboard_mode, video_scaling, true);
+                     keyboard_mode, video_scaling, true, api_addr.as_deref());
     } else if animate_mode {
         // Run color cycling animation test
         run_animated_test(machine_type, video_scaling);
@@ -150,13 +174,14 @@ fn main() {
         // Run with SDL display and CPU execution (default)
         run_with_sdl(machine_type, speed_limit, cart1_path.as_deref(),
                      disk1_path.as_deref(), disk2_path.as_deref(),
-                     keyboard_mode, video_scaling, false);
+                     keyboard_mode, video_scaling, false, api_addr.as_deref());
     }
 }
 
-fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<&str>,
+fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path: Option<&str>,
                 disk1_path: Option<&str>, disk2_path: Option<&str>,
-                keyboard_mode: &str, video_scaling: f64, debug_mode: bool) {
+                keyboard_mode: &str, video_scaling: f64, debug_mode: bool,
+                api_addr: Option<&str>) {
     // Create keyboard mapper based on mode
     let mapper: Box<dyn input::KeyboardMapper> = match keyboard_mode {
         "physical" => Box::new(input::PhysicalMapper),
@@ -217,6 +242,24 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
         atari800.enable_debug_mode();
     }
 
+    // Create console
+    let mut console = Console::new();
+
+    // Start HTTP API if enabled
+    let http_api = api_addr.and_then(|addr| {
+        match HttpApi::start(addr) {
+            Ok(api) => Some(api),
+            Err(e) => {
+                eprintln!("Warning: Failed to start HTTP API: {}", e);
+                None
+            }
+        }
+    });
+
+    // Emulator state
+    let mut powered_on = true;
+    let mut speed_limit = speed_limit_initial;
+
     // Initialize timing for speed limiting
     const FRAME_RATE: f64 = 59.92;  // NTSC frame rate (for speed limiting only)
     let frame_duration = Duration::from_secs_f64(1.0 / FRAME_RATE);
@@ -226,6 +269,19 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     'running: loop {
+        // Process HTTP API requests
+        if let Some(ref api) = http_api {
+            while let Some(request) = api.try_recv() {
+                let mut ctx = ExecutionContext {
+                    atari: &mut atari800,
+                    powered_on: &mut powered_on,
+                    speed_limit: &mut speed_limit,
+                };
+                let result = execute(&mut ctx, request.command);
+                let _ = request.response_tx.send(result);
+            }
+        }
+
         // Get current keyboard modifier state before processing events
         let keyboard_state = event_pump.keyboard_state();
         let shift = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LShift) ||
@@ -235,17 +291,19 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
         let host_alt = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LAlt) ||
                       keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RAlt);
 
-        // Update joystick Option key state and directions
-        atari800.set_joystick_option(host_alt);
-        if host_alt {
-            let up = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up);
-            let down = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down);
-            let left = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left);
-            let right = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right);
-            let trigger = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Slash);
+        // Update joystick Option key state and directions (only when console is hidden)
+        if !console.visible {
+            atari800.set_joystick_option(host_alt);
+            if host_alt {
+                let up = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up);
+                let down = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down);
+                let left = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left);
+                let right = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right);
+                let trigger = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Slash);
 
-            atari800.handle_joystick_direction(up, down, left, right);
-            atari800.handle_joystick_trigger(trigger);
+                atari800.handle_joystick_direction(up, down, left, right);
+                atari800.handle_joystick_trigger(trigger);
+            }
         }
 
         // Handle events
@@ -253,24 +311,81 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
             match event {
                 Event::Quit { .. } => break 'running,
 
+                Event::TextInput { text, .. } if console.visible => {
+                    console.handle_text_input(&text);
+                }
+
                 Event::KeyDown { scancode: Some(scancode), repeat: false, .. } => {
-                    // Host Option+key: special functions
-                    if host_alt {
-                        match scancode {
-                            Scancode::Num1 => atari800.console_press(2), // OPTION
-                            Scancode::Num2 => atari800.console_press(1), // SELECT
-                            Scancode::Num3 => atari800.console_press(0), // START
-                            Scancode::Space => atari800.handle_key_press(input::AKEY_ATARI, shift, ctrl), // Inverse video
-                            Scancode::Backspace => atari800.handle_break_key(), // Break key
-                            Scancode::Tab => atari800.handle_key_press(input::AKEY_CAPS, false, false), // Caps Lock
-                            _ => {}
+                    // Backtick toggles console
+                    if scancode == Scancode::Grave {
+                        console.toggle();
+                        // Enable/disable text input mode
+                        if console.visible {
+                            video_subsystem.text_input().start();
+                        } else {
+                            video_subsystem.text_input().stop();
                         }
-                    } else if let Some(event) = mapper.map_key(scancode, shift, ctrl) {
-                        atari800.handle_key_press(event.key_code, event.shift, event.ctrl);
+                        continue;
+                    }
+
+                    if console.visible {
+                        // Console mode - handle special keys
+                        let console_key = match scancode {
+                            Scancode::Return => Some(ConsoleKey::Enter),
+                            Scancode::Backspace => Some(ConsoleKey::Backspace),
+                            Scancode::Delete => Some(ConsoleKey::Delete),
+                            Scancode::Left => Some(ConsoleKey::Left),
+                            Scancode::Right => Some(ConsoleKey::Right),
+                            Scancode::Home => Some(ConsoleKey::Home),
+                            Scancode::End => Some(ConsoleKey::End),
+                            Scancode::Up => Some(ConsoleKey::Up),
+                            Scancode::Down => Some(ConsoleKey::Down),
+                            Scancode::Tab => Some(ConsoleKey::Tab),
+                            Scancode::Escape => Some(ConsoleKey::Escape),
+                            _ => None,
+                        };
+
+                        if let Some(key) = console_key {
+                            if let Some(command_text) = console.handle_key(key) {
+                                // Execute command
+                                match Command::parse(&command_text) {
+                                    Ok(cmd) => {
+                                        console.print(&format!("> {}", command_text));
+                                        let mut ctx = ExecutionContext {
+                                            atari: &mut atari800,
+                                            powered_on: &mut powered_on,
+                                            speed_limit: &mut speed_limit,
+                                        };
+                                        let result = execute(&mut ctx, cmd);
+                                        console.print_result(&result);
+                                    }
+                                    Err(e) => {
+                                        console.print(&format!("> {}", command_text));
+                                        console.print(&format!("Error: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Normal emulator mode
+                        // Host Option+key: special functions
+                        if host_alt {
+                            match scancode {
+                                Scancode::Num1 => atari800.console_press(2), // OPTION
+                                Scancode::Num2 => atari800.console_press(1), // SELECT
+                                Scancode::Num3 => atari800.console_press(0), // START
+                                Scancode::Space => atari800.handle_key_press(input::AKEY_ATARI, shift, ctrl), // Inverse video
+                                Scancode::Backspace => atari800.handle_break_key(), // Break key
+                                Scancode::Tab => atari800.handle_key_press(input::AKEY_CAPS, false, false), // Caps Lock
+                                _ => {}
+                            }
+                        } else if let Some(event) = mapper.map_key(scancode, shift, ctrl) {
+                            atari800.handle_key_press(event.key_code, event.shift, event.ctrl);
+                        }
                     }
                 }
 
-                Event::KeyUp { scancode: Some(scancode), .. } => {
+                Event::KeyUp { scancode: Some(scancode), .. } if !console.visible => {
                     // Release console buttons
                     match scancode {
                         Scancode::Num1 => atari800.console_release(2), // OPTION
@@ -285,21 +400,34 @@ fn run_with_sdl(machine_type: MachineType, speed_limit: bool, cart_path: Option<
             }
         }
 
-        // Run CPU until ANTIC signals frame completion
-        // ANTIC internally manages video timing (262 scanlines = 1 frame)
-        if debug_mode {
-            // In debug mode, just call tick() in a loop (debugger controls execution)
-            loop {
-                atari800.tick();
-            }
-        } else {
-            // Normal mode uses tick_cpu()
-            loop {
-                if atari800.tick_cpu() {
-                    atari800.render();
-                    break;
+        // Run CPU until ANTIC signals frame completion (if powered on)
+        if powered_on {
+            // ANTIC internally manages video timing (262 scanlines = 1 frame)
+            if debug_mode {
+                // In debug mode, just call tick() in a loop (debugger controls execution)
+                loop {
+                    atari800.tick();
+                }
+            } else {
+                // Normal mode uses tick_cpu()
+                loop {
+                    if atari800.tick_cpu() {
+                        atari800.render();
+                        break;
+                    }
                 }
             }
+        }
+
+        // Render console overlay if visible
+        if console.visible {
+            let console_height = 120; // Half screen height
+            console.render(
+                &mut atari800.gtia.framebuffer.pixels,
+                384,
+                240,
+                console_height,
+            );
         }
 
         // Copy framebuffer to SDL texture

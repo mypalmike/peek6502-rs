@@ -21,3 +21,7 @@ pub mod sio;  // Serial I/O controller
 pub mod sio_bus;  // Serial I/O bus abstraction
 pub mod atrdisk;  // ATR disk image handler
 pub mod patch;  // OS patching facility (SIO patch, etc.)
+pub mod command;  // Command API for console and HTTP
+pub mod command_executor;  // Command execution logic
+pub mod console;  // In-emulator Quake-style console
+pub mod http_api;  // HTTP JSON API server

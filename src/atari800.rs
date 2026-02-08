@@ -1207,3 +1207,140 @@ impl Atari800 {
         self.patch_manager.set_all_enabled(enabled);
     }
 }
+
+// ============================================================================
+// Command API Support (power control, disk/cart management, etc.)
+// ============================================================================
+
+impl Atari800 {
+    /// Power on the emulator (reset CPU)
+    pub fn power_on(&mut self) {
+        self.reset();
+    }
+
+    /// Power off the emulator (stop CPU execution)
+    pub fn power_off(&mut self) {
+        // Nothing to do - main loop handles the power state
+    }
+
+    /// Reset the CPU
+    pub fn reset(&mut self) {
+        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
+        cpu.reset(self);
+        self.cpu = cpu;
+    }
+
+    /// Get the current machine type
+    pub fn get_machine_type(&self) -> MachineType {
+        self.config.machine_type
+    }
+
+    /// Get paths of all attached disk drives
+    /// Returns a Vec of (drive_number, path) tuples
+    pub fn get_disk_paths(&self) -> Vec<(u8, String)> {
+        let mut paths = Vec::new();
+        for device in &self.sio_devices {
+            let id = device.device_id();
+            // Disk drives are $31-$38 (D1:-D8:)
+            if id >= 0x31 && id <= 0x38 {
+                let drive = id - 0x30;
+                paths.push((drive, device.name()));
+            }
+        }
+        paths
+    }
+
+    /// Get the path of a specific disk drive
+    pub fn get_disk_path(&self, drive: u8) -> Option<String> {
+        let device_id = 0x30 + drive;
+        for device in &self.sio_devices {
+            if device.device_id() == device_id {
+                return Some(device.name());
+            }
+        }
+        None
+    }
+
+    /// Eject a disk from a drive
+    /// Returns true if a disk was ejected
+    pub fn eject_disk(&mut self, drive: u8) -> bool {
+        let device_id = 0x30 + drive;
+        let initial_len = self.sio_devices.len();
+        self.sio_devices.retain(|d| d.device_id() != device_id);
+        self.sio_devices.len() < initial_len
+    }
+
+    /// Get the cartridge path (if any)
+    pub fn get_cart_path(&self) -> Option<String> {
+        if self.cart_rom.is_some() {
+            // We don't store the path, so just indicate a cart is loaded
+            Some("(cartridge loaded)".to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Load a cartridge from file
+    pub fn load_cart(&mut self, path: &str) -> Result<(), String> {
+        let data = std::fs::read(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let (rom, base) = if data.len() >= 16 && &data[0..4] == b"CART" {
+            // CART format
+            let cart_type = (data[4] as u32) << 24
+                | (data[5] as u32) << 16
+                | (data[6] as u32) << 8
+                | data[7] as u32;
+            let rom = data[16..].to_vec();
+            let base = match cart_type {
+                1 => {
+                    if rom.len() != 0x2000 {
+                        return Err(format!("CART type 1 expects 8KB ROM, got {}", rom.len()));
+                    }
+                    0xA000u16
+                }
+                2 => {
+                    if rom.len() != 0x4000 {
+                        return Err(format!("CART type 2 expects 16KB ROM, got {}", rom.len()));
+                    }
+                    0x8000u16
+                }
+                _ => {
+                    return Err(format!(
+                        "Unsupported CART type {} - only types 1 (8KB) and 2 (16KB) supported",
+                        cart_type
+                    ))
+                }
+            };
+            (rom, base)
+        } else {
+            // Raw ROM - determine mapping from size
+            let base = match data.len() {
+                0x2000 => 0xA000u16,
+                0x4000 => 0x8000u16,
+                other => {
+                    return Err(format!(
+                        "Unsupported raw cartridge size: {} bytes (expected 8192 or 16384)",
+                        other
+                    ))
+                }
+            };
+            (data, base)
+        };
+
+        self.cart_rom = Some(rom);
+        self.cart_base = base;
+
+        // Reset after loading cartridge
+        self.reset();
+
+        Ok(())
+    }
+
+    /// Eject the cartridge
+    pub fn eject_cart(&mut self) {
+        self.cart_rom = None;
+        self.cart_base = 0xA000;
+        self.reset();
+    }
+}
