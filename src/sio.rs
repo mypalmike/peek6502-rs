@@ -145,20 +145,11 @@ enum SioState {
     /// Sending ACK byte ($41)
     SendingAck,
 
-    /// Sending NAK byte ($4E)
-    SendingNak,
-
     /// Command executing (simulated delay)
     Executing {
         device_index: usize,
         response: SioResponse,
         cycles_remaining: u32,
-    },
-
-    /// Sending result byte (C or E) and optionally data frame
-    SendingResponse {
-        bytes_sent: usize,
-        response: Vec<u8>,
     },
 
     /// Inter-frame delay between Complete and Data
