@@ -1,4 +1,4 @@
-use crate::mem::Mem;
+use crate::bus::ReadBus;
 
 /// ANTIC - Alphanumeric Television Interface Controller
 /// Handles display list processing, DMA, and video timing for Atari 8-bit computers.
@@ -89,7 +89,7 @@ impl Antic {
 
     /// Execute one machine cycle of ANTIC operation.
     /// Returns true if ANTIC is performing DMA (CPU should be halted).
-    pub fn tick(&mut self, _mem: &mut Mem) -> bool {
+    pub fn tick(&mut self, _bus: &dyn ReadBus) -> bool {
         self.horizontal_pos += 1;
 
         // One scanline = 114 color clocks (NTSC)
@@ -186,56 +186,61 @@ impl Antic {
         self.dlist_index = self.dlist_ptr;  // Reset to start of display list
     }
 
-    /// Fetch PM graphics data from memory for the current scanline
+    /// Fetch PM graphics data from memory for the specified scanline
     /// This is called once per scanline during PM DMA
-    pub fn fetch_pm_data(&mut self, mem: &Mem) {
+    /// scanline: the current display scanline (0-239 for visible area)
+    pub fn fetch_pm_data(&mut self, bus: &dyn ReadBus, scanline: usize) {
         // Clear PM data
         self.pm_data = [0; 5];
 
         // Check if PM DMA is enabled in DMACTL
         let missile_dma_enabled = (self.dmactl & 0x08) != 0;  // Bit 3
         let player_dma_enabled = (self.dmactl & 0x04) != 0;   // Bit 2
-        let double_line_mode = (self.dmactl & 0x10) != 0;     // Bit 4
+        // DMACTL bit 4: 0 = double-line resolution, 1 = single-line resolution
+        let single_line_mode = (self.dmactl & 0x10) != 0;     // Bit 4
 
         if !missile_dma_enabled && !player_dma_enabled {
             return;  // No PM DMA enabled
         }
 
+        // Note: We no longer skip when PMBASE==0 because the OS sets PMBASE during
+        // boot and programs may legitimately use low PM base addresses
+
         // Calculate base address from PMBASE
         let pm_base = (self.pmbase as u16) << 8;
 
-        // Calculate scanline offset
-        let scanline_offset = if double_line_mode {
-            // Double-line resolution: each byte used for 2 scanlines
-            (self.scanline / 2) as u16
-        } else {
+        // Calculate scanline offset using the passed scanline parameter
+        let scanline_offset = if single_line_mode {
             // Single-line resolution: one byte per scanline
-            self.scanline as u16
+            scanline as u16
+        } else {
+            // Double-line resolution: each byte used for 2 scanlines
+            (scanline / 2) as u16
         };
 
         // Fetch missile data if enabled
         if missile_dma_enabled {
-            let missile_offset = if double_line_mode {
-                0x180  // Double-line mode offset
-            } else {
+            let missile_offset = if single_line_mode {
                 0x300  // Single-line mode offset
+            } else {
+                0x180  // Double-line mode offset
             };
             let missile_addr = pm_base + missile_offset + scanline_offset;
-            self.pm_data[0] = mem.get_byte(missile_addr);
+            self.pm_data[0] = bus.read(missile_addr);
         }
 
         // Fetch player data if enabled
         if player_dma_enabled {
             for p in 0..4 {
-                let player_offset = if double_line_mode {
-                    // Double-line: P0=$200, P1=$280, P2=$300, P3=$380
-                    0x200 + (p * 0x80)
-                } else {
+                let player_offset = if single_line_mode {
                     // Single-line: P0=$400, P1=$500, P2=$600, P3=$700
                     0x400 + (p * 0x100)
+                } else {
+                    // Double-line: P0=$200, P1=$280, P2=$300, P3=$380
+                    0x200 + (p * 0x80)
                 };
                 let player_addr = pm_base + player_offset + scanline_offset;
-                self.pm_data[1 + p as usize] = mem.get_byte(player_addr);
+                self.pm_data[1 + p as usize] = bus.read(player_addr);
             }
         }
     }
@@ -333,6 +338,21 @@ impl Antic {
         self.current_mode
     }
 
+    /// Get DMACTL value (for debugging)
+    pub fn get_dmactl(&self) -> u8 {
+        self.dmactl
+    }
+
+    /// Get NMIEN value (for debugging)
+    pub fn get_nmien(&self) -> u8 {
+        self.nmien
+    }
+
+    /// Get PMBASE value (for debugging)
+    pub fn get_pmbase(&self) -> u8 {
+        self.pmbase
+    }
+
     /// Mode table entry
     fn mode_info(mode: u8) -> (u8, u16) {
         // Returns (scanlines_per_row, bytes_per_row)
@@ -357,29 +377,29 @@ impl Antic {
 
     /// Process one scanline using the display list
     /// This should be called once per scanline (during horizontal blank)
-    pub fn process_scanline(&mut self, mem: &Mem) {
+    pub fn process_scanline(&mut self, bus: &dyn ReadBus) {
         // Clear scanline buffer to background
         self.scanline_buffer.fill(0);
 
         // If we need to fetch a new display list instruction
         if self.lines_remaining == 0 {
-            self.fetch_display_list_instruction(mem);
+            self.fetch_display_list_instruction(bus);
         }
 
         // Generate scanline data based on current mode
         match self.current_mode {
             0x00 => {} // Blank line - already filled with 0
-            0x02 | 0x03 => self.render_text_hires(mem),
-            0x04 | 0x05 => self.render_text_multicolor(mem),
-            0x06 | 0x07 => self.render_text_wide(mem),
-            0x08 => self.render_bitmap_1bpp(mem, 40, 1, 2, 0),
-            0x09 => self.render_bitmap_1bpp(mem, 20, 4, 1, 0),
-            0x0A => self.render_bitmap_2bpp(mem, 20, 4),
-            0x0B => self.render_bitmap_1bpp(mem, 20, 2, 2, 0),
-            0x0C => self.render_bitmap_1bpp(mem, 20, 2, 2, 0),
-            0x0D => self.render_bitmap_2bpp(mem, 40, 2),
-            0x0E => self.render_bitmap_2bpp(mem, 40, 2),
-            0x0F => self.render_bitmap_1bpp(mem, 40, 1, 2, 0),
+            0x02 | 0x03 => self.render_text_hires(bus),
+            0x04 | 0x05 => self.render_text_multicolor(bus),
+            0x06 | 0x07 => self.render_text_wide(bus),
+            0x08 => self.render_bitmap_1bpp(bus, 40, 1, 2, 0),
+            0x09 => self.render_bitmap_1bpp(bus, 20, 4, 1, 0),
+            0x0A => self.render_bitmap_2bpp(bus, 20, 4),
+            0x0B => self.render_bitmap_1bpp(bus, 20, 2, 2, 0),
+            0x0C => self.render_bitmap_1bpp(bus, 20, 2, 2, 0),
+            0x0D => self.render_bitmap_2bpp(bus, 40, 2),
+            0x0E => self.render_bitmap_2bpp(bus, 40, 2),
+            0x0F => self.render_bitmap_1bpp(bus, 40, 1, 2, 0),
             _ => {}
         }
 
@@ -395,8 +415,8 @@ impl Antic {
     }
 
     /// Fetch next display list instruction
-    fn fetch_display_list_instruction(&mut self, mem: &Mem) {
-        let instruction = mem.get_byte(self.dlist_index);
+    fn fetch_display_list_instruction(&mut self, bus: &dyn ReadBus) {
+        let instruction = bus.read(self.dlist_index);
         self.dlist_index += 1;
 
         // Extract mode (bits 0-3)
@@ -408,12 +428,12 @@ impl Antic {
         // Check for JVB (Jump with Vertical Blank) instruction
         if mode == 0x01 {
             // JVB - jump to new display list address
-            let new_addr_lo = mem.get_byte(self.dlist_index);
-            let new_addr_hi = mem.get_byte(self.dlist_index + 1);
+            let new_addr_lo = bus.read(self.dlist_index);
+            let new_addr_hi = bus.read(self.dlist_index + 1);
             self.dlist_index = ((new_addr_hi as u16) << 8) | (new_addr_lo as u16);
 
             // Re-fetch instruction at new location
-            self.fetch_display_list_instruction(mem);
+            self.fetch_display_list_instruction(bus);
             return;
         }
 
@@ -426,8 +446,8 @@ impl Antic {
 
         // If LMS bit is set, read screen memory address
         if has_lms {
-            let screen_lo = mem.get_byte(self.dlist_index);
-            let screen_hi = mem.get_byte(self.dlist_index + 1);
+            let screen_lo = bus.read(self.dlist_index);
+            let screen_hi = bus.read(self.dlist_index + 1);
             self.screen_ptr = ((screen_hi as u16) << 8) | (screen_lo as u16);
             self.dlist_index += 2;
         }
@@ -456,11 +476,11 @@ impl Antic {
     /// Render one scanline of text hi-res modes (2, 3)
     /// Mode 2: 40 chars, 8 scanlines/row, inverse video via bit 7
     /// Mode 3: 40 chars, 10 scanlines/row, lowercase descenders
-    fn render_text_hires(&mut self, mem: &Mem) {
+    fn render_text_hires(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
 
         for char_col in 0u16..40 {
-            let char_code = mem.get_byte(self.screen_ptr + char_col);
+            let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
 
@@ -469,13 +489,13 @@ impl Antic {
             let font_row = self.mode_line;
             let char_data = if font_row < 8 {
                 let char_addr = char_base + font_index * 8 + (font_row as u16);
-                mem.get_byte(char_addr)
+                bus.read(char_addr)
             } else if self.current_mode == 0x03 {
                 // Descender rows (8-9): only lowercase chars (96-127 in font = 0x60-0x7F)
                 // Map to next page of character set
                 if font_index >= 0x60 {
                     let char_addr = char_base + 0x400 + (font_index - 0x60) * 8 + ((font_row - 8) as u16);
-                    mem.get_byte(char_addr)
+                    bus.read(char_addr)
                 } else {
                     0
                 }
@@ -499,17 +519,17 @@ impl Antic {
     /// Render one scanline of text multi-color modes (4, 5)
     /// 40 chars, 2-bit pixel pairs from font data
     /// Colors: 00=COLBK, 01=COLPF0, 10=COLPF1, 11=COLPF2 (or COLPF3 if inverse)
-    fn render_text_multicolor(&mut self, mem: &Mem) {
+    fn render_text_multicolor(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
         // Font row wraps at 8 (modes 4/5 reuse the 8-line font)
         let font_row = (self.mode_line % 8) as u16;
 
         for char_col in 0u16..40 {
-            let char_code = mem.get_byte(self.screen_ptr + char_col);
+            let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
             let char_addr = char_base + font_index * 8 + font_row;
-            let char_data = mem.get_byte(char_addr);
+            let char_data = bus.read(char_addr);
 
             // Each byte = 4 pixel pairs, each 2 color clocks wide = 8 color clocks
             for pair in 0u16..4 {
@@ -534,16 +554,16 @@ impl Antic {
     /// Render one scanline of text wide modes (6, 7)
     /// 20 chars, bits 6-7 select color, bits 0-5 = char index (64 chars)
     /// Each pixel is 2 color clocks wide = 160 visible pixels
-    fn render_text_wide(&mut self, mem: &Mem) {
+    fn render_text_wide(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
         let font_row = (self.mode_line % 8) as u16;
 
         for char_col in 0u16..20 {
-            let char_code = mem.get_byte(self.screen_ptr + char_col);
+            let char_code = bus.read(self.screen_ptr + char_col);
             let color_select = (char_code >> 6) & 0x03;
             let font_index = (char_code & 0x3F) as u16;
             let char_addr = char_base + font_index * 8 + font_row;
-            let char_data = mem.get_byte(char_addr);
+            let char_data = bus.read(char_addr);
 
             // Color index: 1=COLPF0, 2=COLPF1, 3=COLPF2, 4=COLPF3
             let fg_index = color_select + 1; // maps 0->1, 1->2, 2->3, 3->4
@@ -562,9 +582,9 @@ impl Antic {
     }
 
     /// Render one scanline of 1bpp bitmap modes (8, 9, B, C, F)
-    fn render_bitmap_1bpp(&mut self, mem: &Mem, bytes_per_row: u16, pixel_width: u16, fg_index: u8, bg_index: u8) {
+    fn render_bitmap_1bpp(&mut self, bus: &dyn ReadBus, bytes_per_row: u16, pixel_width: u16, fg_index: u8, bg_index: u8) {
         for byte_col in 0..bytes_per_row {
-            let data = mem.get_byte(self.screen_ptr + byte_col);
+            let data = bus.read(self.screen_ptr + byte_col);
             for bit in 0u16..8 {
                 let pixel_on = (data & (1 << (7 - bit))) != 0;
                 let base_x = (byte_col * 8 * pixel_width + bit * pixel_width) as usize;
@@ -580,9 +600,9 @@ impl Antic {
 
     /// Render one scanline of 2bpp bitmap modes (A, D, E)
     /// 2-bit pairs → indices 0 (COLBK), 1 (COLPF0), 2 (COLPF1), 3 (COLPF2)
-    fn render_bitmap_2bpp(&mut self, mem: &Mem, bytes_per_row: u16, pixel_width: u16) {
+    fn render_bitmap_2bpp(&mut self, bus: &dyn ReadBus, bytes_per_row: u16, pixel_width: u16) {
         for byte_col in 0..bytes_per_row {
-            let data = mem.get_byte(self.screen_ptr + byte_col);
+            let data = bus.read(self.screen_ptr + byte_col);
             for pair in 0u16..4 {
                 let bits = (data >> (6 - pair * 2)) & 0x03;
                 let color_index = bits; // 0=COLBK, 1=COLPF0, 2=COLPF1, 3=COLPF2

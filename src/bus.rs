@@ -1,3 +1,18 @@
+/// Read-only memory access trait (uses &self, not &mut self).
+/// This allows multiple components to read memory simultaneously
+/// without mutable borrow conflicts. Used by ANTIC for DMA reads.
+pub trait ReadBus {
+    /// Read a byte from the given address (immutable)
+    fn read(&self, addr: u16) -> u8;
+
+    /// Read a 16-bit word (little-endian) from the given address
+    fn read_word(&self, addr: u16) -> u16 {
+        let lo = self.read(addr) as u16;
+        let hi = self.read(addr.wrapping_add(1)) as u16;
+        lo | (hi << 8)
+    }
+}
+
 /// The Bus trait abstracts the memory and I/O address space.
 /// Components like the CPU use this trait to read/write without
 /// knowing whether they're accessing RAM, ROM, or memory-mapped I/O.

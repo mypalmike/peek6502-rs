@@ -14,8 +14,8 @@ fn test_pm_dma_single_line_mode() {
     antic.write_register(0xD407, 0x20);  // PMBASE = 0x20 (base address $2000)
 
     // Enable PM DMA: missiles + players, single-line mode
-    // Bit 2 = player DMA, Bit 3 = missile DMA, Bit 4 = 0 (single-line)
-    antic.write_register(0xD400, 0x0C);  // DMACTL = 0b00001100
+    // Bit 2 = player DMA, Bit 3 = missile DMA, Bit 4 = 1 (single-line resolution)
+    antic.write_register(0xD400, 0x1C);  // DMACTL = 0b00011100
 
     // Set up player 0 data in memory
     // Single-line mode: P0 starts at PMBASE*256 + $400 = $2000 + $400 = $2400
@@ -33,8 +33,8 @@ fn test_pm_dma_single_line_mode() {
     // Set ANTIC scanline to 100
     antic.set_scanline_for_test(100);
 
-    // Fetch PM data from memory
-    antic.fetch_pm_data(&mem);
+    // Fetch PM data from memory (pass scanline for correct offset)
+    antic.fetch_pm_data(&mem, 100);
 
     // Verify PM data was fetched
     assert_eq!(antic.pm_data[1], 0xFF, "P0 data should be 0xFF at scanline 100");
@@ -59,8 +59,8 @@ fn test_pm_dma_double_line_mode() {
     antic.write_register(0xD407, 0x20);  // PMBASE
 
     // Enable PM DMA: players, double-line mode
-    // Bit 2 = player DMA, Bit 4 = 1 (double-line)
-    antic.write_register(0xD400, 0x14);  // DMACTL = 0b00010100
+    // Bit 2 = player DMA, Bit 4 = 0 (double-line resolution)
+    antic.write_register(0xD400, 0x04);  // DMACTL = 0b00000100
 
     // Set up player 0 data in memory
     // Double-line mode: P0 starts at PMBASE*256 + $200 = $2000 + $200 = $2200
@@ -76,8 +76,8 @@ fn test_pm_dma_double_line_mode() {
     // Set ANTIC scanline to 100
     antic.set_scanline_for_test(100);
 
-    // Fetch PM data
-    antic.fetch_pm_data(&mem);
+    // Fetch PM data (pass scanline for correct offset)
+    antic.fetch_pm_data(&mem, 100);
 
     // Verify PM data was fetched
     assert_eq!(antic.pm_data[1], 0xFF, "P0 data should be 0xFF in double-line mode");
@@ -102,7 +102,8 @@ fn test_pm_dma_missiles() {
     antic.write_register(0xD407, 0x20);  // PMBASE = $2000
 
     // Enable missile DMA only, single-line mode
-    antic.write_register(0xD400, 0x08);  // DMACTL = 0b00001000 (bit 3 = missiles)
+    // Bit 3 = missile DMA, Bit 4 = 1 (single-line resolution)
+    antic.write_register(0xD400, 0x18);  // DMACTL = 0b00011000
 
     // Set up missile data in memory
     // Single-line mode: Missiles at PMBASE*256 + $300 = $2300
@@ -117,8 +118,8 @@ fn test_pm_dma_missiles() {
     // Set ANTIC scanline
     antic.set_scanline_for_test(100);
 
-    // Fetch PM data
-    antic.fetch_pm_data(&mem);
+    // Fetch PM data (pass scanline for correct offset)
+    antic.fetch_pm_data(&mem, 100);
 
     // Verify missile data was fetched
     assert_eq!(antic.pm_data[0], 0xFF, "Missile data should be 0xFF");
@@ -146,7 +147,7 @@ fn test_pm_dma_disabled() {
     antic.write_register(0xD400, 0x00);  // DMACTL = 0 (no PM DMA)
 
     antic.set_scanline_for_test(100);
-    antic.fetch_pm_data(&mem);
+    antic.fetch_pm_data(&mem, 100);
 
     // PM data should be empty (not fetched)
     assert_eq!(antic.pm_data[1], 0x00, "P0 data should be 0 when DMA disabled");

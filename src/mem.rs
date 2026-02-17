@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Read;
+use crate::bus::ReadBus;
 
 pub struct Mem {
     pub ram: [u8; 0x10000], // 64K // 1024],
@@ -76,5 +77,12 @@ impl Mem {
         let hi_byte = (val >> 8) as u8;
         self.set_byte(addr, lo_byte);
         self.set_byte(addr + 1, hi_byte);
+    }
+}
+
+/// Implement ReadBus for Mem to allow it to be used with ANTIC in tests
+impl ReadBus for Mem {
+    fn read(&self, addr: u16) -> u8 {
+        self.get_byte(addr)
     }
 }

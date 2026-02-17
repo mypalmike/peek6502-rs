@@ -1,6 +1,5 @@
-use crate::bus::Bus;
+use crate::bus::{Bus, ReadBus};
 use crate::cpu::Cpu;
-use crate::mem::Mem;  // Still needed for temp_mem compatibility layer
 use crate::debugger::Debugger;
 use crate::antic::Antic;
 use crate::gtia::Gtia;
@@ -17,14 +16,162 @@ use crate::sio::{SioController, SioDevice, SioTiming};
 use crate::sio_bus::SioBus;
 use crate::patch::PatchManager;
 
+// ============================================================================
+// MemorySystem - Extracted memory subsystem for clean borrow separation
+// ============================================================================
+
+/// Memory subsystem containing all memory-related components.
+/// Implements ReadBus for immutable reads (ANTIC DMA) and Bus for mutable access.
+pub struct MemorySystem {
+    pub memory_map: MemoryMap,
+    pub cart_rom: Option<Vec<u8>>,
+    pub cart_base: u16,
+    pub rom_overlay: RomOverlayController,
+    pub bank_controller: BankController,
+}
+
+impl MemorySystem {
+    pub fn new() -> Self {
+        MemorySystem {
+            memory_map: MemoryMap::new(),
+            cart_rom: None,
+            cart_base: 0xA000,
+            rom_overlay: RomOverlayController::new(),
+            bank_controller: BankController::new(BankingScheme::None),
+        }
+    }
+}
+
+/// ReadBus implementation for immutable memory reads (used by ANTIC for DMA)
+impl ReadBus for MemorySystem {
+    fn read(&self, addr: u16) -> u8 {
+        // 1. Cartridge ROM (highest priority)
+        if let Some(cart_rom) = &self.cart_rom {
+            if addr >= self.cart_base && addr < self.cart_base + (cart_rom.len() as u16) {
+                return cart_rom[(addr - self.cart_base) as usize];
+            }
+        }
+
+        // 2. ROM overlays (800XL/130XE PORTB-controlled)
+        if let Some(value) = self.rom_overlay.read(addr) {
+            return value;
+        }
+
+        // 3. Banked RAM (130XE extended memory)
+        if let Some(value) = self.bank_controller.read(addr) {
+            return value;
+        }
+
+        // 4. Memory map (base RAM/ROM)
+        self.memory_map.read(addr).unwrap_or(0xFF)
+    }
+}
+
+// ============================================================================
+// SystemBus - Wrapper combining memory and chip I/O for CPU execution
+// ============================================================================
+
+/// Combines MemorySystem with chip I/O references for full Bus implementation.
+/// This allows CPU to access both memory and I/O chips without ownership conflicts.
+struct SystemBus<'a> {
+    memory: &'a mut MemorySystem,
+    gtia: &'a mut Gtia,
+    pokey: &'a mut Pokey,
+    pia: &'a mut Pia,
+    antic: &'a mut Antic,
+    nmi_line: bool,
+    sio_controller: &'a mut SioController,
+}
+
+impl Bus for SystemBus<'_> {
+    fn read(&mut self, addr: u16) -> u8 {
+        // Check for I/O regions first
+        if let Some(region) = self.memory.memory_map.find_region(addr) {
+            if let MemoryRegionType::Io(io_region) = region {
+                return match io_region.chip_type {
+                    ChipType::Gtia => self.gtia.read_register(addr),
+                    ChipType::Pokey => self.pokey.read_register(addr),
+                    ChipType::Pia => self.pia.read_register(addr),
+                    ChipType::Antic => self.antic.read_register(addr),
+                };
+            }
+        }
+
+        // Use ReadBus implementation for memory access
+        ReadBus::read(self.memory, addr)
+    }
+
+    fn write(&mut self, addr: u16, val: u8) {
+        // 1. Cartridge ROM (ignore writes)
+        if let Some(cart_rom) = &self.memory.cart_rom {
+            if addr >= self.memory.cart_base && addr < self.memory.cart_base + (cart_rom.len() as u16) {
+                return;
+            }
+        }
+
+        // 2. Check for I/O regions
+        if let Some(region) = self.memory.memory_map.find_region(addr) {
+            if let MemoryRegionType::Io(io_region) = region {
+                match io_region.chip_type {
+                    ChipType::Gtia => {
+                        self.gtia.write_register(addr, val);
+                    }
+                    ChipType::Pokey => {
+                        if (addr & 0x0F) == 0x0E {
+                            self.pokey.write_irqen(val);
+                        } else {
+                            self.pokey.write_register(addr, val);
+                            // Forward SEROUT writes to SIO controller
+                            if (addr & 0x0F) == 0x0D {
+                                self.sio_controller.receive_byte(val);
+                            }
+                        }
+                    }
+                    ChipType::Pia => {
+                        self.pia.write_register(addr, val);
+                        // PORTB controls ROM overlays on 800XL/130XE
+                        if (addr & 0x03) == 0x01 {
+                            let portb = self.pia.get_portb();
+                            self.memory.rom_overlay.update_portb(portb);
+                        }
+                    }
+                    ChipType::Antic => {
+                        self.antic.write_register(addr, val);
+                    }
+                }
+                return;
+            }
+        }
+
+        // 3. ROM overlay write blocking
+        if self.memory.rom_overlay.is_write_blocked(addr) {
+            return;
+        }
+
+        // 4. Banked RAM (130XE)
+        if self.memory.bank_controller.write(addr, val) {
+            return;
+        }
+
+        // 5. Memory map (base RAM)
+        self.memory.memory_map.write(addr, val);
+    }
+
+    fn nmi_asserted(&self) -> bool {
+        self.nmi_line
+    }
+
+    fn irq_asserted(&self) -> bool {
+        self.pokey.irq_active() || self.pia.irq_active()
+    }
+}
+
 pub struct Atari800 {
     // Core components
     cpu: Cpu,
 
-    // NEW: Memory architecture
-    memory_map: MemoryMap,
-    bank_controller: BankController,  // For 130XE RAM banking
-    rom_overlay: RomOverlayController,  // For 800XL/130XE ROM overlays
+    // Memory subsystem (contains memory_map, cart_rom, rom_overlay, bank_controller)
+    pub memory: MemorySystem,
     config: MachineConfig,
 
     // Custom chips
@@ -53,10 +200,6 @@ pub struct Atari800 {
 
     // NMI line (6502 hardware interrupt line)
     nmi_line: bool,
-
-    // Cartridge ROM (mapped at $A000-$BFFF for 8KB, $8000-$BFFF for 16KB)
-    cart_rom: Option<Vec<u8>>,
-    cart_base: u16,
 }
 
 impl Atari800 {
@@ -71,45 +214,41 @@ impl Atari800 {
     /// Create a minimal Atari800 for render/animation tests
     /// No CPU execution, no OS ROM, no banking - just ANTIC/GTIA testing
     pub fn for_render_test() -> Atari800 {
-        // Simple memory map - RAM plus I/O regions
-        let mut memory_map = MemoryMap::new();
+        // Build memory system
+        let mut memory = MemorySystem::new();
 
         // Base RAM
-        memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
             0x0000,
             0xFFFF,
             0,
         )));
 
         // I/O regions (overlay RAM)
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD000,
             0xD0FF,
             ChipType::Gtia,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD200,
             0xD2FF,
             ChipType::Pokey,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD300,
             0xD3FF,
             ChipType::Pia,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD400,
             0xD4FF,
             ChipType::Antic,
             100,
         )));
-
-        // No banking or ROM overlays needed for tests
-        let bank_controller = BankController::new(BankingScheme::None);
-        let rom_overlay = RomOverlayController::new();
 
         // Minimal config
         let config = MachineConfig {
@@ -125,9 +264,7 @@ impl Atari800 {
 
         Atari800 {
             cpu: Cpu::new(),
-            memory_map,
-            bank_controller,
-            rom_overlay,
+            memory,
             config,
             antic: Antic::new(),
             gtia: Gtia::new(),
@@ -142,8 +279,6 @@ impl Atari800 {
             master_cycle: 0,
             cpu_halted: false,
             nmi_line: false,
-            cart_rom: None,
-            cart_base: 0xA000,
         }
     }
 
@@ -206,8 +341,11 @@ impl Atari800 {
             (None, 0xA000)
         };
 
-        // Build memory map
-        let mut memory_map = MemoryMap::new();
+        // Build memory system
+        let mut memory = MemorySystem::new();
+        memory.cart_rom = cart_rom;
+        memory.cart_base = cart_base;
+        memory.bank_controller = BankController::new(config.banking_scheme);
 
         // 1. Add RAM (entire address space up to ram_size, lowest priority)
         // Handle 64KB case: ram_size can be 65536, but u16 max is 65535
@@ -216,32 +354,32 @@ impl Atari800 {
         } else {
             (config.ram_size - 1) as u16
         };
-        memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Ram(RamRegion::new(
             0x0000,
             ram_end,
             0,  // Lowest priority
         )));
 
         // 2. Add I/O regions (high priority, overlays RAM)
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD000,
             0xD0FF,
             ChipType::Gtia,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD200,
             0xD2FF,
             ChipType::Pokey,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD300,
             0xD3FF,
             ChipType::Pia,
             100,
         )));
-        memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
+        memory.memory_map.add_region(MemoryRegionType::Io(IoRegion::new(
             0xD400,
             0xD4FF,
             ChipType::Antic,
@@ -262,16 +400,13 @@ impl Atari800 {
             vec![0xFF; config.os_rom_size]
         };
 
-        // 4. Set up banking and ROM overlays
-        let bank_controller = BankController::new(config.banking_scheme);  // For 130XE extended RAM
-        let mut rom_overlay = RomOverlayController::new();
-
+        // 4. Set up ROM overlays
         // Atari 800: Fixed OS ROM in memory map (no overlays)
         // Atari 800XL/130XE: ROM overlays controlled by PORTB
         match config.machine_type {
             MachineType::Atari800 => {
                 // Add OS ROM as fixed ROM region (not an overlay)
-                memory_map.add_region(MemoryRegionType::Rom(RomRegion::new(
+                memory.memory_map.add_region(MemoryRegionType::Rom(RomRegion::new(
                     config.os_rom_start,
                     os_rom_data.clone(),
                     50,  // Higher priority than RAM, lower than I/O
@@ -298,11 +433,11 @@ impl Atari800 {
                     os_combined.extend_from_slice(&vec![0xFF; 0x800]); // Pad $D000-$D7FF (I/O hole)
                     os_combined.extend_from_slice(&os_high);
 
-                    rom_overlay.set_os_rom(os_combined);
-                    rom_overlay.set_selftest_rom(selftest);
+                    memory.rom_overlay.set_os_rom(os_combined);
+                    memory.rom_overlay.set_selftest_rom(selftest);
                 } else {
                     eprintln!("Warning: 800XL OS ROM too small ({} bytes, expected 16KB)", os_rom_data.len());
-                    rom_overlay.set_os_rom(os_rom_data.clone());
+                    memory.rom_overlay.set_os_rom(os_rom_data.clone());
                 }
 
                 if let Some(ref basic_path) = config.basic_rom_path {
@@ -312,7 +447,7 @@ impl Atari800 {
                             eprintln!("Using empty ROM (BASIC will not work)");
                             vec![0xFF; config.basic_rom_size]
                         });
-                    rom_overlay.set_basic_rom(basic_data);
+                    memory.rom_overlay.set_basic_rom(basic_data);
                 }
             }
         }
@@ -320,9 +455,7 @@ impl Atari800 {
         // Create system
         let mut atari800 = Atari800 {
             cpu: Cpu::new(),
-            memory_map,
-            bank_controller,
-            rom_overlay,
+            memory,
             config,
             antic: Antic::new(),
             gtia: Gtia::new(),
@@ -341,8 +474,6 @@ impl Atari800 {
             master_cycle: 0,
             cpu_halted: false,
             nmi_line: false,
-            cart_rom,
-            cart_base,
         };
 
         // Set PORTB based on machine type
@@ -355,15 +486,24 @@ impl Atari800 {
             MachineType::Atari800XL => {
                 // Simulate OPTION held down during boot (BASIC disabled)
                 atari800.pia.set_portb(0xFF);  // OS ROM on, BASIC disabled
-                atari800.rom_overlay.update_portb(0xFF);  // Initialize ROM overlay state
+                atari800.memory.rom_overlay.update_portb(0xFF);  // Initialize ROM overlay state
             }
         }
 
         // Reset CPU after construction to load PC from reset vector
-        // Use mem::replace to temporarily take ownership of CPU
-        let mut cpu = std::mem::replace(&mut atari800.cpu, Cpu::new());
-        cpu.reset(&mut atari800);  // atari800 implements Bus
-        atari800.cpu = cpu;
+        // Use SystemBus wrapper to avoid ownership conflicts
+        {
+            let mut bus = SystemBus {
+                memory: &mut atari800.memory,
+                gtia: &mut atari800.gtia,
+                pokey: &mut atari800.pokey,
+                pia: &mut atari800.pia,
+                antic: &mut atari800.antic,
+                nmi_line: atari800.nmi_line,
+                sio_controller: &mut atari800.sio_controller,
+            };
+            atari800.cpu.reset(&mut bus);
+        }
 
         // Load XEX file if specified
         if is_xex {
@@ -528,43 +668,40 @@ impl Atari800 {
     pub fn tick_cpu(&mut self) -> bool {
         const CYCLES_PER_SCANLINE: u32 = 114;  // One scanline = 114 color clocks
 
-        // Take ownership of CPU temporarily
-        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
-
         let mut cycles_this_scanline = 0;
 
         // Execute CPU for one scanline worth of cycles
         while cycles_this_scanline < CYCLES_PER_SCANLINE {
             // Check for OS patches before executing CPU instruction
-            // We need to temporarily restore cpu to self for patch execution
-            if self.patch_manager.has_patch(cpu.pc) {
-                self.cpu = cpu;
+            if self.patch_manager.has_patch(self.cpu.pc) {
                 if self.check_and_execute_patch() {
-                    // Patch handled the operation, take CPU back and continue
-                    cpu = std::mem::replace(&mut self.cpu, Cpu::new());
                     cycles_this_scanline += 1;
                     continue;
                 }
-                // Patch didn't handle, take CPU back for normal execution
-                cpu = std::mem::replace(&mut self.cpu, Cpu::new());
             }
 
-            // Execute one CPU cycle
-            cpu.tick(self);
+            // Execute one CPU cycle using SystemBus wrapper
+            {
+                let mut bus = SystemBus {
+                    memory: &mut self.memory,
+                    gtia: &mut self.gtia,
+                    pokey: &mut self.pokey,
+                    pia: &mut self.pia,
+                    antic: &mut self.antic,
+                    nmi_line: self.nmi_line,
+                    sio_controller: &mut self.sio_controller,
+                };
+                self.cpu.tick(&mut bus);
+            }
             cycles_this_scanline += 1;
 
             // Tick POKEY for this cycle
             self.pokey.tick();
 
             // Tick SIO for this cycle
-            // This handles command line monitoring and byte transfers
             self.tick_sio();
         }
 
-        // Restore CPU
-        self.cpu = cpu;
-
-        // Update IRQ line from POKEY
         // Advance ANTIC one scanline
         self.antic.advance_scanline();
 
@@ -710,21 +847,15 @@ impl Atari800 {
         // Reset ANTIC display list state for new frame (simulates vertical blank)
         self.antic.start_frame();
 
-        // Get temporary Mem for ANTIC processing (compatibility layer)
-        let temp_mem = self.get_temp_mem();
-
         // Process all 240 visible NTSC scanlines through ANTIC display list
-        // The display list itself controls which lines are blank (overscan) vs. content
+        // ANTIC reads directly from MemorySystem via ReadBus (no temp copy needed!)
         for scanline in 0..240 {
-            self.antic.process_scanline(&temp_mem);
-            // Fetch PM graphics from memory via DMA
-            self.antic.fetch_pm_data(&temp_mem);
+            self.antic.process_scanline(&self.memory);
+            // Fetch PM graphics from memory via DMA (pass current scanline for correct offset)
+            self.antic.fetch_pm_data(&self.memory, scanline);
             // Render the scanline with PM DMA data
             self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode(), Some(&self.antic.pm_data));
         }
-
-        // Update memory if ANTIC modified anything (currently no-op)
-        self.update_from_temp_mem(&temp_mem);
     }
 
     /// Save framebuffer as PPM image file
@@ -743,10 +874,17 @@ impl Atari800 {
         // Only trigger NMI if VBI is enabled in NMIEN register (bit 6)
         // This matches real hardware behavior - OS enables VBI after initialization
         if self.antic.is_vbi_enabled() {
-            // Trigger NMI on CPU
-            let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
-            cpu.nmi(self);  // self implements Bus
-            self.cpu = cpu;
+            // Trigger NMI on CPU using SystemBus wrapper
+            let mut bus = SystemBus {
+                memory: &mut self.memory,
+                gtia: &mut self.gtia,
+                pokey: &mut self.pokey,
+                pia: &mut self.pia,
+                antic: &mut self.antic,
+                nmi_line: self.nmi_line,
+                sio_controller: &mut self.sio_controller,
+            };
+            self.cpu.nmi(&mut bus);
         }
     }
 
@@ -874,47 +1012,22 @@ impl Atari800 {
 
     /// Read memory byte (for debugging)
     pub fn read_mem(&self, addr: u16) -> u8 {
-        // Read through the memory map
-        self.memory_map.read(addr).unwrap_or(0xFF)
-    }
-
-    /// Get temporary Mem wrapper for ANTIC scanline processing
-    /// This is a compatibility layer until ANTIC is refactored to use Bus
-    fn get_temp_mem(&mut self) -> Mem {
-        // Create a temporary Mem struct by extracting RAM from memory map
-        // This is inefficient but maintains compatibility with existing ANTIC code
-        if let Some(region) = self.memory_map.find_region_mut(0x0000) {
-            if let MemoryRegionType::Ram(ram) = region {
-                // Create a Mem struct that wraps the RAM data
-                // For now, just create one with the OS ROM start from config
-                let mut mem = Mem::new(self.config.os_rom_start, false);
-                // Copy RAM data (inefficient but works for now)
-                mem.ram[..ram.data.len()].copy_from_slice(&ram.data);
-                return mem;
-            }
-        }
-        // Fallback: create empty Mem
-        Mem::new(0xD800, false)
-    }
-
-    /// Update RAM from temporary Mem (after ANTIC processing)
-    fn update_from_temp_mem(&mut self, _mem: &Mem) {
-        // ANTIC doesn't write to memory during scanline processing, so this is a no-op
-        // If ANTIC ever needs to write (e.g., for DMA), this would need implementation
+        // Use ReadBus implementation on memory system
+        ReadBus::read(&self.memory, addr)
     }
 }
 
 impl Bus for Atari800 {
     fn read(&mut self, addr: u16) -> u8 {
-        // 1. Cartridge ROM (highest priority, not in memory map)
-        if let Some(cart_rom) = &self.cart_rom {
-            if addr >= self.cart_base && addr < self.cart_base + (cart_rom.len() as u16) {
-                return cart_rom[(addr - self.cart_base) as usize];
+        // 1. Cartridge ROM (highest priority)
+        if let Some(cart_rom) = &self.memory.cart_rom {
+            if addr >= self.memory.cart_base && addr < self.memory.cart_base + (cart_rom.len() as u16) {
+                return cart_rom[(addr - self.memory.cart_base) as usize];
             }
         }
 
         // 2. Check memory map for region type
-        if let Some(region) = self.memory_map.find_region(addr) {
+        if let Some(region) = self.memory.memory_map.find_region(addr) {
             match region {
                 MemoryRegionType::Io(io_region) => {
                     // Route to appropriate chip based on region config
@@ -935,29 +1048,29 @@ impl Bus for Atari800 {
         }
 
         // 3. ROM overlays (800XL/130XE PORTB-controlled ROM overlays)
-        if let Some(value) = self.rom_overlay.read(addr) {
+        if let Some(value) = self.memory.rom_overlay.read(addr) {
             return value;
         }
 
         // 4. Banked RAM (130XE extended memory)
-        if let Some(value) = self.bank_controller.read(addr) {
+        if let Some(value) = self.memory.bank_controller.read(addr) {
             return value;
         }
 
         // 5. Memory map (base RAM)
-        self.memory_map.read(addr).unwrap_or(0xFF)
+        self.memory.memory_map.read(addr).unwrap_or(0xFF)
     }
 
     fn write(&mut self, addr: u16, val: u8) {
-        // 1. Cartridge ROM (ignore writes, not in memory map)
-        if let Some(cart_rom) = &self.cart_rom {
-            if addr >= self.cart_base && addr < self.cart_base + (cart_rom.len() as u16) {
+        // 1. Cartridge ROM (ignore writes)
+        if let Some(cart_rom) = &self.memory.cart_rom {
+            if addr >= self.memory.cart_base && addr < self.memory.cart_base + (cart_rom.len() as u16) {
                 return;
             }
         }
 
         // 2. Check memory map for region type
-        if let Some(region) = self.memory_map.find_region(addr) {
+        if let Some(region) = self.memory.memory_map.find_region(addr) {
             match region {
                 MemoryRegionType::Io(io_region) => {
                     // Route to appropriate chip based on region config
@@ -969,12 +1082,10 @@ impl Bus for Atari800 {
                             // Special handling for IRQEN register ($D20E)
                             if (addr & 0x0F) == 0x0E {
                                 self.pokey.write_irqen(val);
-                                // IRQ state will be checked directly via irq_asserted()
                             } else {
                                 self.pokey.write_register(addr, val);
 
                                 // Forward SEROUT ($D20D) writes to SIO controller
-                                // Data path: OS → POKEY SEROUT → SIO controller
                                 if (addr & 0x0F) == 0x0D {
                                     let mut sio = std::mem::take(&mut self.sio_controller);
                                     sio.receive_byte(val);
@@ -984,12 +1095,10 @@ impl Bus for Atari800 {
                         }
                         ChipType::Pia => {
                             self.pia.write_register(addr, val);
-                            // PORTB ($D301) controls ROM overlays on 800XL/130XE
-                            // Read the actual PORTB data register value, not the PIA register
-                            // (which might be DDRB if PBCTL bit 2 is clear)
+                            // PORTB controls ROM overlays on 800XL/130XE
                             if (addr & 0x03) == 0x01 {
                                 let portb = self.pia.get_portb();
-                                self.rom_overlay.update_portb(portb);
+                                self.memory.rom_overlay.update_portb(portb);
                             }
                         }
                         ChipType::Antic => {
@@ -1005,18 +1114,17 @@ impl Bus for Atari800 {
         }
 
         // 3. ROM overlay write blocking
-        // If ROM is overlaid at this address, ignore write (ROM is read-only)
-        if self.rom_overlay.is_write_blocked(addr) {
-            return;  // Write ignored
+        if self.memory.rom_overlay.is_write_blocked(addr) {
+            return;
         }
 
         // 4. Banked RAM (130XE)
-        if self.bank_controller.write(addr, val) {
+        if self.memory.bank_controller.write(addr, val) {
             return;
         }
 
         // 5. Memory map (base RAM)
-        self.memory_map.write(addr, val);
+        self.memory.memory_map.write(addr, val);
     }
 
     fn nmi_asserted(&self) -> bool {
@@ -1024,9 +1132,6 @@ impl Bus for Atari800 {
     }
 
     fn irq_asserted(&self) -> bool {
-        // Directly check all IRQ sources - no caching
-        // POKEY: keyboard, timers, serial I/O interrupts
-        // PIA: proceed line and interrupt line (via PACTL/PBCTL bit 7)
         self.pokey.irq_active() || self.pia.irq_active()
     }
 }
@@ -1225,9 +1330,16 @@ impl Atari800 {
 
     /// Reset the CPU
     pub fn reset(&mut self) {
-        let mut cpu = std::mem::replace(&mut self.cpu, Cpu::new());
-        cpu.reset(self);
-        self.cpu = cpu;
+        let mut bus = SystemBus {
+            memory: &mut self.memory,
+            gtia: &mut self.gtia,
+            pokey: &mut self.pokey,
+            pia: &mut self.pia,
+            antic: &mut self.antic,
+            nmi_line: self.nmi_line,
+            sio_controller: &mut self.sio_controller,
+        };
+        self.cpu.reset(&mut bus);
     }
 
     /// Get the current machine type
@@ -1272,7 +1384,7 @@ impl Atari800 {
 
     /// Get the cartridge path (if any)
     pub fn get_cart_path(&self) -> Option<String> {
-        if self.cart_rom.is_some() {
+        if self.memory.cart_rom.is_some() {
             // We don't store the path, so just indicate a cart is loaded
             Some("(cartridge loaded)".to_string())
         } else {
@@ -1328,8 +1440,8 @@ impl Atari800 {
             (data, base)
         };
 
-        self.cart_rom = Some(rom);
-        self.cart_base = base;
+        self.memory.cart_rom = Some(rom);
+        self.memory.cart_base = base;
 
         // Reset after loading cartridge
         self.reset();
@@ -1339,8 +1451,8 @@ impl Atari800 {
 
     /// Eject the cartridge
     pub fn eject_cart(&mut self) {
-        self.cart_rom = None;
-        self.cart_base = 0xA000;
+        self.memory.cart_rom = None;
+        self.memory.cart_base = 0xA000;
         self.reset();
     }
 }

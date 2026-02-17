@@ -707,6 +707,13 @@ impl Gtia {
             self.trig[port] = value;
         }
     }
+
+    // Debug accessors for write-only registers
+    pub fn get_gractl(&self) -> u8 { self.gractl }
+    pub fn get_hposp(&self, p: usize) -> u8 { self.hposp[p.min(3)] }
+    pub fn get_sizep(&self, p: usize) -> u8 { self.sizep[p.min(3)] }
+    pub fn get_colpm(&self, p: usize) -> u8 { self.colpm[p.min(3)] }
+    pub fn get_grafp(&self, p: usize) -> u8 { self.grafp[p.min(3)] }
 }
 
 /// Atari 800 NTSC color palette (16 hues × 8 luminance levels = 128 colors)
