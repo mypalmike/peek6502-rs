@@ -521,8 +521,13 @@ impl Antic {
     /// Colors: 00=COLBK, 01=COLPF0, 10=COLPF1, 11=COLPF2 (or COLPF3 if inverse)
     fn render_text_multicolor(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
-        // Font row wraps at 8 (modes 4/5 reuse the 8-line font)
-        let font_row = (self.mode_line % 8) as u16;
+        // Mode 5 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
+        // Mode 4 (8 scanlines/row) = single-height
+        let font_row = if self.current_mode == 0x05 {
+            (self.mode_line / 2) as u16
+        } else {
+            self.mode_line as u16
+        };
 
         for char_col in 0u16..40 {
             let char_code = bus.read(self.screen_ptr + char_col);
@@ -556,7 +561,13 @@ impl Antic {
     /// Each pixel is 2 color clocks wide = 160 visible pixels
     fn render_text_wide(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
-        let font_row = (self.mode_line % 8) as u16;
+        // Mode 7 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
+        // Mode 6 (8 scanlines/row) = single-height
+        let font_row = if self.current_mode == 0x07 {
+            (self.mode_line / 2) as u16
+        } else {
+            self.mode_line as u16
+        };
 
         for char_col in 0u16..20 {
             let char_code = bus.read(self.screen_ptr + char_col);
