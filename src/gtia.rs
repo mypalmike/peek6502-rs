@@ -302,6 +302,10 @@ impl Gtia {
     /// Fills pm_scanline buffer with PM object bits
     /// scanline_y: current scanline number (used for VDELAY)
     /// pm_dma_data: optional PM data from ANTIC DMA (if None, uses GRAFP/GRAFM registers)
+    ///
+    /// Coordinate system: HPOS values are in color clocks (0-255).
+    /// The visible playfield starts at color clock 48 and is 160 color clocks wide.
+    /// Each color clock = 2 hi-res pixels, so we double the width and offset.
     fn generate_pm_scanline(&mut self, scanline_y: usize, pm_dma_data: Option<&[u8; 5]>) {
         // Clear PM scanline buffer
         self.pm_scanline = [0; 384];
@@ -312,10 +316,17 @@ impl Gtia {
 
         let is_even_scanline = (scanline_y & 1) == 0;
 
+        // PM coordinate offset: HPOS 48 = left edge of normal playfield = screen pixel 0
+        // Each color clock = 2 hi-res pixels
+        const PM_HPOS_OFFSET: i32 = 48;
+
         // Render players (if enabled)
         if players_enabled {
             for p in 0..4 {
-                let hpos = self.hposp[p] as usize;
+                // Convert HPOS (color clocks) to screen pixels
+                // screen_x = (hpos - 48) * 2
+                let hpos = self.hposp[p] as i32;
+                let screen_x = (hpos - PM_HPOS_OFFSET) * 2;
                 let size_mode = (self.sizep[p] & 0x03) as usize;
 
                 // Determine which graphics to use
@@ -344,19 +355,28 @@ impl Gtia {
                 // Expand graphics pattern using lookup table
                 let expanded = self.grafp_lookup[size_mode][graf as usize];
 
-                // Determine width based on size mode
-                let width = match size_mode {
-                    0 | 2 => 8,   // 1x width
-                    1 => 16,      // 2x width
-                    3 => 32,      // 4x width
-                    _ => 8,
+                // Width in screen pixels (each color clock = 2 hi-res pixels)
+                // 1x = 8 color clocks = 16 pixels
+                // 2x = 16 color clocks = 32 pixels
+                // 4x = 32 color clocks = 64 pixels
+                let (width_pixels, pattern_bits) = match size_mode {
+                    0 | 2 => (16, 8),    // 1x width: 8 bits expanded to 16 pixels
+                    1 => (32, 16),       // 2x width: 16 bits expanded to 32 pixels
+                    3 => (64, 32),       // 4x width: 32 bits expanded to 64 pixels
+                    _ => (16, 8),
                 };
 
-                // Place expanded bits in scanline buffer
-                for bit in 0..width {
-                    let x = hpos + bit;
-                    if x < 384 && ((expanded >> (width - 1 - bit)) & 1) != 0 {
-                        self.pm_scanline[x] |= 1 << (4 + p);  // Set player bit (P0-P3 = bits 4-7)
+                // Place expanded bits in scanline buffer (each pattern bit = 2 screen pixels)
+                for bit in 0..pattern_bits {
+                    if ((expanded >> (pattern_bits - 1 - bit)) & 1) != 0 {
+                        // Each pattern bit becomes 2 screen pixels (for hi-res alignment)
+                        let pixels_per_bit = width_pixels / pattern_bits;
+                        for dx in 0..pixels_per_bit {
+                            let x = screen_x + (bit as i32) * (pixels_per_bit as i32) + (dx as i32);
+                            if x >= 0 && x < 384 {
+                                self.pm_scanline[x as usize] |= 1 << (4 + p);  // Set player bit (P0-P3 = bits 4-7)
+                            }
+                        }
                     }
                 }
             }
@@ -388,28 +408,35 @@ impl Gtia {
             };
 
             for m in 0..4 {
-                let hpos = self.hposm[m] as usize;
+                // Convert HPOS (color clocks) to screen pixels
+                let hpos = self.hposm[m] as i32;
+                let screen_x = (hpos - PM_HPOS_OFFSET) * 2;
                 let size_bits = (self.sizem >> (m * 2)) & 0x03;
 
                 // Extract 2-bit missile pattern from GRAFM
                 let graf_bits = (grafm >> (m * 2)) & 0x03;
 
-                // Determine width based on size
-                let width = match size_bits {
-                    0 | 2 => 2,   // 1x width (2 pixels)
-                    1 => 4,       // 2x width (4 pixels)
-                    3 => 8,       // 4x width (8 pixels)
-                    _ => 2,
+                // Width in screen pixels (each color clock = 2 hi-res pixels)
+                // Missiles are 2 color clocks wide at 1x
+                // 1x = 2 color clocks = 4 pixels
+                // 2x = 4 color clocks = 8 pixels
+                // 4x = 8 color clocks = 16 pixels
+                let width_pixels = match size_bits {
+                    0 | 2 => 4,    // 1x width
+                    1 => 8,        // 2x width
+                    3 => 16,       // 4x width
+                    _ => 4,
                 };
 
                 // Expand the 2-bit pattern across the width
+                // Each bit of the 2-bit pattern covers half the width
                 for bit in 0..2 {
                     if ((graf_bits >> (1 - bit)) & 1) != 0 {
-                        let pixel_width = width / 2;
-                        for dx in 0..pixel_width {
-                            let x = hpos + bit * pixel_width + dx;
-                            if x < 384 {
-                                self.pm_scanline[x] |= 1 << m;  // Set missile bit (M0-M3 = bits 0-3)
+                        let half_width = width_pixels / 2;
+                        for dx in 0..half_width {
+                            let x = screen_x + (bit as i32) * half_width + dx;
+                            if x >= 0 && x < 384 {
+                                self.pm_scanline[x as usize] |= 1 << m;  // Set missile bit (M0-M3 = bits 0-3)
                             }
                         }
                     }

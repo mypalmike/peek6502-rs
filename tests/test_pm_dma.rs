@@ -44,7 +44,8 @@ fn test_pm_dma_single_line_mode() {
     gtia.render_scanline(100, &scanline, 0x02, Some(&antic.pm_data));
 
     // Check that player was rendered
-    let (r, g, b) = gtia.framebuffer.get_pixel(32 + 50, 100);
+    // HPOS=50 -> screen_x = (50-48)*2 = 4, framebuffer_x = 32 + 4 = 36
+    let (r, g, b) = gtia.framebuffer.get_pixel(36, 100);
     assert!(r > 200 || g > 200 || b > 200,
         "Player should be visible from PM DMA data: RGB({},{},{})", r, g, b);
 }
@@ -87,7 +88,8 @@ fn test_pm_dma_double_line_mode() {
     gtia.render_scanline(100, &scanline, 0x02, Some(&antic.pm_data));
 
     // Check rendering
-    let (r, g, b) = gtia.framebuffer.get_pixel(32 + 50, 100);
+    // HPOS=50 -> screen_x = (50-48)*2 = 4, framebuffer_x = 32 + 4 = 36
+    let (r, g, b) = gtia.framebuffer.get_pixel(36, 100);
     assert!(r > 200 || g > 200 || b > 200,
         "Player should be visible in double-line mode: RGB({},{},{})", r, g, b);
 }
@@ -129,7 +131,8 @@ fn test_pm_dma_missiles() {
     gtia.render_scanline(100, &scanline, 0x02, Some(&antic.pm_data));
 
     // Check rendering
-    let (r, g, b) = gtia.framebuffer.get_pixel(32 + 60, 100);
+    // HPOS=60 -> screen_x = (60-48)*2 = 24, framebuffer_x = 32 + 24 = 56
+    let (r, g, b) = gtia.framebuffer.get_pixel(56, 100);
     assert!(r > 100 || g > 100 || b > 100,
         "Missile should be visible from DMA: RGB({},{},{})", r, g, b);
 }

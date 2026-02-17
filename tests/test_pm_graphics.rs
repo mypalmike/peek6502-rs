@@ -166,8 +166,8 @@ fn test_missile_rendering() {
     gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Verify framebuffer has missile pixels
-    // At position 100-101, should see missile color (white)
-    let (r, g, b) = gtia.framebuffer.get_pixel(32 + 100, 50);  // 32 = OVERSCAN_LEFT
+    // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
+    let (r, g, b) = gtia.framebuffer.get_pixel(136, 50);  // 32 = OVERSCAN_LEFT
 
     // White should have high RGB values
     assert!(r > 200 || g > 200 || b > 200, "Missile should be visible with bright color");
@@ -190,14 +190,15 @@ fn test_gractl_disable_players() {
     gtia.render_scanline(50, &scanline, 0x02, None);
 
     // Get background color for comparison
-    let (bg_r, bg_g, bg_b) = gtia.framebuffer.get_pixel(32 + 100, 50);
+    // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
+    let (bg_r, bg_g, bg_b) = gtia.framebuffer.get_pixel(136, 50);
 
     // Now enable players and render again
     gtia.write_register(0xD01D, 0b10);
     gtia.clear_framebuffer();
     gtia.render_scanline(50, &scanline, 0x02, None);
 
-    let (p_r, p_g, p_b) = gtia.framebuffer.get_pixel(32 + 100, 50);
+    let (p_r, p_g, p_b) = gtia.framebuffer.get_pixel(136, 50);
 
     // With players enabled, color should be different (brighter)
     assert!(
@@ -220,19 +221,21 @@ fn test_priority_mode_0() {
     gtia.write_register(0xD012, 0xFE); // COLPM0 = hue 15, lum 7 (brightest yellow)
     gtia.write_register(0xD016, 0x44); // COLPF0 = darker color
 
+    // HPOS=100 -> screen_x = (100-48)*2 = 104, player spans 104-119 (16 pixels at 1x)
     let mut scanline = [0u8; 384];
-    for i in 95..110 {
+    for i in 100..120 {
         scanline[i] = 1;  // Playfield 0
     }
 
     gtia.render_scanline(50, &scanline, 0x02, None);
 
-    // At position 100 (where both player and playfield exist),
+    // At position 104 (where both player and playfield exist),
     // player should be visible (mode 0 = PM in front)
-    let (r, g, b) = gtia.framebuffer.get_pixel(32 + 100, 50);
+    // framebuffer_x = 32 + 104 = 136
+    let (r, g, b) = gtia.framebuffer.get_pixel(136, 50);
 
     // Debug output
-    println!("Priority mode 0: pixel at (100, 50) = ({}, {}, {})", r, g, b);
+    println!("Priority mode 0: pixel at (136, 50) = ({}, {}, {})", r, g, b);
 
     // Should see player color (bright yellow = high values)
     assert!(r > 200 || g > 200 || b > 200, "Player should be in front in priority mode 0 (got RGB {},{},{})", r, g, b);
@@ -285,17 +288,19 @@ fn test_vdelay_player() {
 
     let scanline = [0u8; 384];
 
+    // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
+
     // Render even scanline (0) - should use delayed value (initially 0)
     gtia.render_scanline(0, &scanline, 0x02, None);
-    let (r0, g0, b0) = gtia.framebuffer.get_pixel(32 + 100, 0);
+    let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
     // Render odd scanline (1) - should use current value (0xFF) and store it
     gtia.render_scanline(1, &scanline, 0x02, None);
-    let (r1, g1, b1) = gtia.framebuffer.get_pixel(32 + 100, 1);
+    let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
     // Render even scanline (2) - should now use delayed value (0xFF from odd scanline)
     gtia.render_scanline(2, &scanline, 0x02, None);
-    let (r2, g2, b2) = gtia.framebuffer.get_pixel(32 + 100, 2);
+    let (r2, g2, b2) = gtia.framebuffer.get_pixel(136, 2);
 
     // Even scanline 0: delayed value is 0 (not set yet), so should be dark
     assert!(r0 < 100 && g0 < 100 && b0 < 100,
@@ -328,12 +333,14 @@ fn test_vdelay_disabled() {
 
     let scanline = [0u8; 384];
 
+    // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
+
     // Render even and odd scanlines
     gtia.render_scanline(0, &scanline, 0x02, None);
-    let (r0, g0, b0) = gtia.framebuffer.get_pixel(32 + 100, 0);
+    let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
     gtia.render_scanline(1, &scanline, 0x02, None);
-    let (r1, g1, b1) = gtia.framebuffer.get_pixel(32 + 100, 1);
+    let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
     // Both should be bright (no delay, always use current value)
     assert!(r0 > 200 || g0 > 200 || b0 > 200,
