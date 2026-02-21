@@ -409,10 +409,9 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
                     atari800.tick();
                 }
             } else {
-                // Normal mode uses tick_cpu()
+                // Normal mode uses tick_scanline()
                 loop {
-                    if atari800.tick_cpu() {
-                        atari800.render();
+                    if atari800.tick_scanline() {
                         break;
                     }
                 }

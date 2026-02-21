@@ -43,15 +43,15 @@ pub struct Antic {
     // NMI line state
     nmi_asserted: bool,  // true = ANTIC is asserting NMI line
 
-    // Cycle tracking for scanline advancement
-    cycle_accumulator: u32,  // Accumulated CPU cycles since last scanline advance
-
     // Scanline buffer (pixels to be displayed)
     pub scanline_buffer: [u8; 384],  // Color indices for current scanline
 
     // Player/Missile DMA data (fetched from memory each scanline)
     // [Missiles, P0, P1, P2, P3] - one byte per PM object per scanline
     pub pm_data: [u8; 5],
+
+    // DLI (Display List Interrupt) flag from current display list instruction
+    has_dli: bool,
 }
 
 impl Antic {
@@ -81,38 +81,63 @@ impl Antic {
             nmien: 0,
             nmires: 0,
             nmi_asserted: false,
-            cycle_accumulator: 0,
             scanline_buffer: [0; 384],
             pm_data: [0; 5],
+            has_dli: false,
         }
     }
 
-    /// Execute one machine cycle of ANTIC operation.
-    /// Returns true if ANTIC is performing DMA (CPU should be halted).
-    pub fn tick(&mut self, _bus: &dyn ReadBus) -> bool {
-        self.horizontal_pos += 1;
+    /// Tick ANTIC one machine cycle. Called in lockstep with CPU.
+    /// On cycle 0 of each scanline: deasserts NMI, processes display list,
+    /// renders scanline, fetches PM data, asserts VBI if appropriate.
+    /// On all other cycles: advances horizontal position.
+    pub fn tick(&mut self, bus: &dyn ReadBus) {
+        if self.horizontal_pos == 0 {
+            // --- Cycle 0: start of scanline ---
 
-        // One scanline = 114 color clocks (NTSC)
-        if self.horizontal_pos >= 114 {
-            self.horizontal_pos = 0;
-            self.scanline += 1;
-            self.vcount = (self.scanline & 0xff) as u8;
+            // Deassert NMI from previous scanline (clean edge for next)
+            // Also clear NMIST bits — on real ANTIC, NMIST reflects current NMI
+            // state, not a persistent latch. The OS DLI path relies on this:
+            // it doesn't write NMIRES, so stale DLI bits must auto-clear
+            // before VBI fires, otherwise VBI is misinterpreted as DLI.
+            self.nmi_asserted = false;
+            // Do NOT clear nmires here. NMIST must retain its value until software
+            // writes NMIRES ($D40F). The OS NMI handler reads NMIST to distinguish
+            // DLI (bit 7) from VBI (bit 6).
 
-            // Reset at end of frame (262 scanlines for NTSC)
-            if self.scanline >= 262 {
-                self.scanline = 0;
+            // Reset display list at start of visible area
+            if self.scanline == 0 {
+                self.start_frame();
+            }
+
+            // Visible scanlines: process display list and render (only when DMA enabled)
+            if self.scanline < 240 && self.dma_enabled {
+                self.process_scanline(bus);
+                self.fetch_pm_data(bus, self.scanline as usize);
+            }
+
+            // VBI at scanline 248
+            if self.scanline == 248 && self.is_vbi_enabled() {
+                self.nmi_asserted = true;
+                self.nmires = 0x40;  // VBI: replace NMIST so OS sees correct type
             }
         }
 
-        // TODO: Implement actual DMA logic
-        // For now, just return false (no DMA active)
-        false
+        // Advance horizontal position
+        self.horizontal_pos += 1;
+
+        // End of scanline — advance to next
+        if self.horizontal_pos >= 114 {
+            self.horizontal_pos = 0;
+            self.scanline = (self.scanline + 1) % 262;
+            self.vcount = (self.scanline / 2) as u8;
+        }
     }
 
     /// Read from an ANTIC register
     pub fn read_register(&self, addr: u16) -> u8 {
         match addr & 0x0F {
-            0x0B => self.vcount,    // VCOUNT is readable
+            0x0B => self.vcount,    // VCOUNT
             0x0C => self.penh,      // Light pen H
             0x0D => self.penv,      // Light pen V
             0x0F => {
@@ -156,17 +181,6 @@ impl Antic {
             }
             _ => {}
         }
-    }
-
-    /// Set VBI (Vertical Blank Interrupt) flag in NMIST
-    /// Called by Atari800 when triggering VBI
-    pub fn set_vbi_flag(&mut self) {
-        self.nmires |= 0x40;  // Set bit 6 = VBI occurred
-    }
-
-    /// Clear VBI flag (called when NMI is acknowledged)
-    pub fn clear_vbi_flag(&mut self) {
-        self.nmires &= !0x40;  // Clear bit 6
     }
 
     /// Check if VBI NMI is enabled
@@ -254,67 +268,6 @@ impl Antic {
         self.mode_line = 0;
     }
 
-    /// Simulate one frame of ANTIC video timing (for instruction-level emulation)
-    /// This advances through all scanlines to keep VCOUNT realistic for OS timing loops
-    /// Should be called before each frame render
-    pub fn simulate_frame_timing(&mut self) {
-        // Simulate that a full frame has passed - cycle through all 262 scanlines
-        // This allows OS busy-wait loops on VCOUNT to complete
-        // We start at scanline 0 each frame for simplicity
-        self.scanline = 0;
-        self.vcount = 0;
-    }
-
-    /// Advance to a specific scanline (for simulating mid-frame timing)
-    pub fn advance_to_scanline(&mut self, target: u16) {
-        if target < 262 {
-            self.scanline = target;
-            self.vcount = (target & 0xff) as u8;
-        }
-    }
-
-    /// Advance to next scanline (wraps at 262)
-    pub fn advance_scanline(&mut self) {
-        self.scanline = (self.scanline + 1) % 262;
-        self.vcount = (self.scanline / 2) as u8;  // VCOUNT = scanline / 2
-
-        // Pulse NMI at start of VBLANK (scanline 248) if VBI is enabled
-        // VBLANK spans scanlines 248-261, then 0-9 (22 lines total)
-        // NMI is edge-triggered, so we assert for one scanline then deassert
-        if self.scanline == 248 && self.is_vbi_enabled() {
-            self.nmi_asserted = true;
-            self.nmires |= 0x40;  // Set VBI flag in NMIST
-        }
-
-        // Deassert NMI after one scanline (creates falling edge for CPU to detect)
-        if self.scanline == 249 {
-            self.nmi_asserted = false;
-        }
-    }
-
-    /// Tick ANTIC by the specified number of CPU cycles
-    /// ANTIC advances scanlines every 114 cycles (one scanline = 114 color clocks for NTSC)
-    /// This keeps VCOUNT realistic for OS timing loops
-    /// Returns true if a frame just completed (scanline wrapped to 0)
-    pub fn tick_cycles(&mut self, cycles: u32) -> bool {
-        self.cycle_accumulator += cycles;
-        let mut frame_complete = false;
-
-        // Advance scanline every 114 cycles
-        while self.cycle_accumulator >= 114 {
-            self.cycle_accumulator -= 114;
-            let prev_scanline = self.scanline;
-            self.advance_scanline();
-
-            // Frame completes when scanline wraps from 261 to 0
-            if prev_scanline == 261 && self.scanline == 0 {
-                frame_complete = true;
-            }
-        }
-
-        frame_complete
-    }
-
     /// Check if ANTIC is asserting the NMI line
     /// Returns current line state (no side effects)
     pub fn is_nmi_asserted(&self) -> bool {
@@ -341,6 +294,11 @@ impl Antic {
     /// Get DMACTL value (for debugging)
     pub fn get_dmactl(&self) -> u8 {
         self.dmactl
+    }
+
+    /// Get CHBASE value (for debugging)
+    pub fn get_chbase(&self) -> u8 {
+        self.chbase
     }
 
     /// Get NMIEN value (for debugging)
@@ -412,6 +370,14 @@ impl Antic {
             self.lines_remaining -= 1;
             self.mode_line += 1;
         }
+
+        // Fire DLI on the last line of a DLI-flagged mode instruction
+        if self.has_dli && self.lines_remaining == 0 {
+            if (self.nmien & 0x80) != 0 {
+                self.nmi_asserted = true;
+                self.nmires = 0x80;  // DLI: replace NMIST so OS sees correct type
+            }
+        }
     }
 
     /// Fetch next display list instruction
@@ -423,7 +389,7 @@ impl Antic {
         let mode = instruction & 0x0F;
 
         // Check for DLI (Display List Interrupt) bit (bit 7)
-        let _has_dli = (instruction & 0x80) != 0;
+        self.has_dli = (instruction & 0x80) != 0;
 
         // Check for JVB (Jump with Vertical Blank) instruction
         if mode == 0x01 {
