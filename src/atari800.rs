@@ -666,9 +666,10 @@ impl Atari800 {
     /// Execute one scanline (114 cycles) of all components in lockstep.
     /// Returns true when frame is complete.
     pub fn tick_scanline(&mut self) -> bool {
-        // Clear framebuffer at start of frame
+        // Clear framebuffer and audio buffer at start of frame
         if self.antic.scanline == 0 {
             self.gtia.clear_framebuffer();
+            self.pokey.audio_buffer.start_frame();
             self.master_cycle += 1;
             if self.master_cycle <= 5 || self.master_cycle % 60 == 0 {
                 let dmactl = self.antic.get_dmactl();
@@ -747,6 +748,9 @@ impl Atari800 {
             self.pokey.tick();
             self.tick_sio();
         }
+
+        // Generate audio for this scanline (114 CPU cycles -> ~2.8 samples at 44.1kHz)
+        self.pokey.generate_audio(114);
 
         // GTIA composites after CPU had chance to run DLI handler
         if current_scanline < 240 {
@@ -1027,6 +1031,12 @@ impl Atari800 {
     /// Get current scanline from ANTIC (for timing and debugging)
     pub fn get_scanline(&self) -> u16 {
         self.antic.get_scanline()
+    }
+
+    /// Get audio samples collected for the current frame (for SDL2 audio queue).
+    /// Call after tick_scanline() returns true (frame complete).
+    pub fn get_audio_samples(&self) -> &[i16] {
+        self.pokey.audio_buffer.as_slice()
     }
 
     /// Read memory byte (for debugging)

@@ -1,4 +1,5 @@
 pub mod atari800;
+pub mod audio_buffer;
 pub mod bus;
 pub mod cpu;
 pub mod debugger;
@@ -8,6 +9,7 @@ pub mod mem;
 pub mod antic;
 pub mod gtia;
 pub mod pokey;
+pub mod pokey_audio;
 pub mod pia;
 pub mod input;
 pub mod joystick;

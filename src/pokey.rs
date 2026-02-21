@@ -1,3 +1,6 @@
+use crate::pokey_audio::PokeyAudio;
+use crate::audio_buffer::AudioBuffer;
+
 /// POKEY - Potentiometer Keyboard Integrated Circuit
 /// Handles sound generation, keyboard input, serial I/O, and timers.
 ///
@@ -26,6 +29,10 @@ pub struct Pokey {
     serin: u8,          // $D20D - Serial port input
     irqst: u8,          // $D20E - IRQ status
     skstat: u8,         // $D20F - Serial port status
+
+    // Audio synthesis engine and per-frame output buffer
+    pub audio: PokeyAudio,
+    pub audio_buffer: AudioBuffer,
 
     // Internal state
     timers: [u16; 4],   // Internal timer counters
@@ -76,6 +83,9 @@ impl Pokey {
             last_key_code: 0xFF, // No key pressed initially
             shift_pressed: false,
             ctrl_pressed: false,
+            // NTSC Atari 800: 1.79 MHz CPU, 44100 Hz audio output
+            audio: PokeyAudio::new(1_789_790, 44100),
+            audio_buffer: AudioBuffer::new(),
         }
     }
 
@@ -187,15 +197,15 @@ impl Pokey {
     /// Write to a POKEY register
     pub fn write_register(&mut self, addr: u16, val: u8) {
         match addr & 0x0F {
-            0x00 => self.audf[0] = val,
-            0x01 => self.audc[0] = val,
-            0x02 => self.audf[1] = val,
-            0x03 => self.audc[1] = val,
-            0x04 => self.audf[2] = val,
-            0x05 => self.audc[2] = val,
-            0x06 => self.audf[3] = val,
-            0x07 => self.audc[3] = val,
-            0x08 => self.audctl = val,
+            0x00 => { self.audf[0] = val; self.audio.update_register(0x00, val); }
+            0x01 => { self.audc[0] = val; self.audio.update_register(0x01, val); }
+            0x02 => { self.audf[1] = val; self.audio.update_register(0x02, val); }
+            0x03 => { self.audc[1] = val; self.audio.update_register(0x03, val); }
+            0x04 => { self.audf[2] = val; self.audio.update_register(0x04, val); }
+            0x05 => { self.audc[2] = val; self.audio.update_register(0x05, val); }
+            0x06 => { self.audf[3] = val; self.audio.update_register(0x06, val); }
+            0x07 => { self.audc[3] = val; self.audio.update_register(0x07, val); }
+            0x08 => { self.audctl = val; self.audio.update_register(0x08, val); }
             0x09 => {
                 self.stimer = val;
                 // Reset all timers
@@ -386,5 +396,15 @@ impl Pokey {
     /// This is called when the OS writes a byte to SEROUT that needs to be sent to SIO
     pub fn get_serout_byte(&self) -> u8 {
         self.serout
+    }
+
+    // ========================================================================
+    // Audio Generation
+    // ========================================================================
+
+    /// Generate audio for `ticks` CPU cycles, appending samples to the internal buffer.
+    /// Called once per scanline (ticks=114) from Atari800::tick_scanline().
+    pub fn generate_audio(&mut self, ticks: u32) {
+        self.audio.generate(ticks, &mut self.audio_buffer);
     }
 }

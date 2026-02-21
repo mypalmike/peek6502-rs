@@ -8,6 +8,7 @@ use atari800_rs::functional_test::FunctionalTest;
 use atari800_rs::input;
 use std::env;
 use std::time::{Duration, Instant};
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
@@ -195,6 +196,18 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
     // Initialize SDL2
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+
+    // Initialize SDL2 audio (44100 Hz mono i16)
+    let audio_subsystem = sdl_context.audio().unwrap();
+    let desired_spec = AudioSpecDesired {
+        freq: Some(44100),
+        channels: Some(1),  // mono
+        samples: Some(1024),
+    };
+    let audio_queue: AudioQueue<i16> = audio_subsystem
+        .open_queue(None, &desired_spec)
+        .unwrap();
+    audio_queue.resume();
 
     // Create window with specified scaling factor
     let window_width = (384.0 * video_scaling) as u32;
@@ -415,6 +428,16 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
                         break;
                     }
                 }
+            }
+        }
+
+        // Queue audio samples for this frame.
+        // Limit buffering to ~3 frames worth to prevent audio lag.
+        let max_queued_bytes = 44100 * 2 * 3 / 60; // ~3 frame's worth of bytes
+        if (audio_queue.size() as u32) < max_queued_bytes {
+            let samples = atari800.get_audio_samples();
+            if !samples.is_empty() {
+                audio_queue.queue_audio(samples).ok();
             }
         }
 
