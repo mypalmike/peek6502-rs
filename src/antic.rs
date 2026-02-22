@@ -223,13 +223,17 @@ impl Antic {
         // Calculate base address from PMBASE
         let pm_base = (self.pmbase as u16) << 8;
 
-        // Calculate scanline offset using the passed scanline parameter
+        // Calculate scanline offset using the passed scanline parameter.
+        // On real hardware, PM memory is indexed by the physical scanline counter.
+        // The visible display starts at scanline 8 (VCOUNT=4), so we must add 8
+        // to match the vertical positioning games expect.
+        let adjusted_scanline = scanline + 8;
         let scanline_offset = if single_line_mode {
             // Single-line resolution: one byte per scanline
-            scanline as u16
+            adjusted_scanline as u16
         } else {
             // Double-line resolution: each byte used for 2 scanlines
-            (scanline / 2) as u16
+            (adjusted_scanline / 2) as u16
         };
 
         // Fetch missile data if enabled

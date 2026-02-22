@@ -19,8 +19,8 @@ fn test_pm_dma_single_line_mode() {
 
     // Set up player 0 data in memory
     // Single-line mode: P0 starts at PMBASE*256 + $400 = $2000 + $400 = $2400
-    // We'll set scanline 100 to have pattern 0xFF
-    mem.set_byte(0x2400 + 100, 0xFF);  // P0 scanline 100
+    // Visible scanline 100 maps to PM offset 108 (100 + 8 VBLANK lines)
+    mem.set_byte(0x2400 + 108, 0xFF);  // P0 at visible scanline 100
 
     // Set up player positions and sizes
     gtia.write_register(0xD000, 50);   // HPOSP0 at x=50
@@ -65,8 +65,8 @@ fn test_pm_dma_double_line_mode() {
 
     // Set up player 0 data in memory
     // Double-line mode: P0 starts at PMBASE*256 + $200 = $2000 + $200 = $2200
-    // Scanline 100 / 2 = 50
-    mem.set_byte(0x2200 + 50, 0xFF);  // P0 double-line 50 (scanlines 100-101)
+    // Visible scanline 100 -> adjusted scanline 108, offset = 108/2 = 54
+    mem.set_byte(0x2200 + 54, 0xFF);  // P0 double-line 54 (visible scanlines 100-101)
 
     // Set up player
     gtia.write_register(0xD000, 50);   // HPOSP0
@@ -109,7 +109,8 @@ fn test_pm_dma_missiles() {
 
     // Set up missile data in memory
     // Single-line mode: Missiles at PMBASE*256 + $300 = $2300
-    mem.set_byte(0x2300 + 100, 0xFF);  // All missiles visible at scanline 100
+    // Visible scanline 100 maps to PM offset 108 (100 + 8 VBLANK lines)
+    mem.set_byte(0x2300 + 108, 0xFF);  // All missiles visible at scanline 100
 
     // Set up missiles
     gtia.write_register(0xD004, 60);   // HPOSM0
