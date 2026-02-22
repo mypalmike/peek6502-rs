@@ -5,7 +5,7 @@ use crate::antic::Antic;
 use crate::gtia::Gtia;
 use crate::pokey::Pokey;
 use crate::pia::Pia;
-use crate::joystick::{JoystickInput, KeyboardJoystick};
+use crate::controller::ControllerInput;
 use crate::memory_map::MemoryMap;
 use crate::memory_region::{MemoryRegionType, RamRegion, RomRegion, IoRegion, ChipType};
 use crate::banking::{BankController, BankingScheme};
@@ -181,7 +181,7 @@ pub struct Atari800 {
     pia: Pia,
 
     // Input devices
-    joystick: Box<dyn JoystickInput>,
+    pub controller_input: ControllerInput,
 
     // Serial I/O
     sio_controller: SioController,
@@ -270,7 +270,7 @@ impl Atari800 {
             gtia: Gtia::new(),
             pokey: Pokey::new(),
             pia: Pia::new(),
-            joystick: Box::new(KeyboardJoystick::new()),
+            controller_input: ControllerInput::new(),
             sio_controller: SioController::new(),
             sio_devices: Vec::new(),
             sio_timing: SioTiming::default(),
@@ -461,7 +461,7 @@ impl Atari800 {
             gtia: Gtia::new(),
             pokey: Pokey::new(),
             pia: Pia::new(),
-            joystick: Box::new(KeyboardJoystick::new()),
+            controller_input: ControllerInput::new(),
             sio_controller: SioController::new(),
             sio_devices: Vec::new(),
             sio_timing: SioTiming::default(),
@@ -970,60 +970,36 @@ impl Atari800 {
         self.gtia.consol_input |= 1 << bit;
     }
 
-    /// Handle joystick direction keys (Option+arrows)
-    pub fn handle_joystick_direction(&mut self, up: bool, down: bool, left: bool, right: bool) {
-        if let Some(keyboard_joy) = self.joystick.as_any_mut().downcast_mut::<KeyboardJoystick>() {
-            keyboard_joy.handle_direction(up, down, left, right);
-        }
-        self.update_joystick_state();
-    }
+    /// Update PIA and GTIA with current controller input state.
+    /// Call once per frame after merging all input sources into controller_input.
+    pub fn update_controller_state(&mut self) {
+        let ports = &self.controller_input.ports;
 
-    /// Handle joystick trigger key (Option+/)
-    pub fn handle_joystick_trigger(&mut self, pressed: bool) {
-        if let Some(keyboard_joy) = self.joystick.as_any_mut().downcast_mut::<KeyboardJoystick>() {
-            keyboard_joy.handle_trigger(pressed);
-        }
-        self.update_joystick_state();
-    }
-
-    /// Set Option/Alt key state for joystick emulation
-    pub fn set_joystick_option(&mut self, pressed: bool) {
-        if let Some(keyboard_joy) = self.joystick.as_any_mut().downcast_mut::<KeyboardJoystick>() {
-            keyboard_joy.set_option(pressed);
-            if !pressed {
-                keyboard_joy.release_all();
-            }
-        }
-        self.update_joystick_state();
-    }
-
-    /// Update PIA and GTIA with current joystick state
-    fn update_joystick_state(&mut self) {
-        // Get state for all 4 joystick ports
-        let joy1 = self.joystick.get_state(1);
-        let joy2 = self.joystick.get_state(2);
-        let joy3 = self.joystick.get_state(3);
-        let joy4 = self.joystick.get_state(4);
+        // Convert ControllerState to PIA 4-bit nibbles (active low: 0=pressed, 1=not pressed)
+        let joy1_bits = controller_to_pia_bits(&ports[0]);
+        let joy2_bits = controller_to_pia_bits(&ports[1]);
+        let joy3_bits = controller_to_pia_bits(&ports[2]);
+        let joy4_bits = controller_to_pia_bits(&ports[3]);
 
         // Update PORTA (joysticks 1 & 2)
         // Bits 0-3: joy1, Bits 4-7: joy2
-        let porta = (joy2.to_pia_bits() << 4) | joy1.to_pia_bits();
+        let porta = (joy2_bits << 4) | joy1_bits;
         self.pia.set_porta_input(porta);
 
         // Update PORTB (joysticks 3 & 4)
         // Bits 0-3: joy3, Bits 4-7: joy4
-        let portb = (joy4.to_pia_bits() << 4) | joy3.to_pia_bits();
+        let portb = (joy4_bits << 4) | joy3_bits;
         self.pia.set_portb_input(portb);
 
-        // Update GTIA triggers
-        self.gtia.set_trigger(0, joy1.trigger_value());
-        self.gtia.set_trigger(1, joy2.trigger_value());
-        self.gtia.set_trigger(2, joy3.trigger_value());
+        // Update GTIA triggers (active low: 0=pressed, 1=released)
+        self.gtia.set_trigger(0, if ports[0].button_a { 0 } else { 1 });
+        self.gtia.set_trigger(1, if ports[1].button_a { 0 } else { 1 });
+        self.gtia.set_trigger(2, if ports[2].button_a { 0 } else { 1 });
 
         // IMPORTANT: On 800XL, TRIG3 is connected to cartridge RD5 line (not joystick 4)
         // Only update TRIG3 for joystick 4 on Atari 800
         if matches!(self.config.machine_type, MachineType::Atari800) {
-            self.gtia.set_trigger(3, joy4.trigger_value());
+            self.gtia.set_trigger(3, if ports[3].button_a { 0 } else { 1 });
         }
         // On 800XL, TRIG3 remains 0 (no cartridge) or 1 (cartridge present) from init
     }
@@ -1484,4 +1460,15 @@ impl Atari800 {
         self.memory.cart_base = 0xA000;
         self.reset();
     }
+}
+
+/// Convert a ControllerState to a 4-bit PIA nibble (active low: 0=pressed, 1=not pressed)
+/// Bit 0: up, Bit 1: down, Bit 2: left, Bit 3: right
+fn controller_to_pia_bits(state: &crate::controller::ControllerState) -> u8 {
+    let mut bits: u8 = 0x0F; // All released by default
+    if state.up { bits &= !0x01; }
+    if state.down { bits &= !0x02; }
+    if state.left { bits &= !0x04; }
+    if state.right { bits &= !0x08; }
+    bits
 }

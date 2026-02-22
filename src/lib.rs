@@ -12,7 +12,9 @@ pub mod pokey;
 pub mod pokey_audio;
 pub mod pia;
 pub mod input;
-pub mod joystick;
+pub mod controller;
+pub mod keyboard_controller;
+pub mod sdl_controller;
 pub mod memory_region;
 pub mod memory_map;
 pub mod banking;  // RAM banking for 130XE extended memory

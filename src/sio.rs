@@ -1,4 +1,4 @@
-// SIO (Serial I/O) Protocol Handler - Clean Architecture
+// SIO (Serial I/O) Protocol Handler
 //
 // This module implements the Atari SIO protocol with a clean separation of concerns:
 // - SioDevice trait: abstraction for any SIO peripheral (disk, printer, modem, etc.)

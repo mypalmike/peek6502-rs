@@ -3,9 +3,11 @@ use atari800_rs::command::Command;
 use atari800_rs::command_executor::{execute, ExecutionContext};
 use atari800_rs::console::{Console, ConsoleKey};
 use atari800_rs::http_api::HttpApi;
+use atari800_rs::keyboard_controller::KeyboardController;
 use atari800_rs::machine_config::MachineType;
 use atari800_rs::functional_test::FunctionalTest;
 use atari800_rs::input;
+use atari800_rs::sdl_controller::SdlControllerManager;
 use std::env;
 use std::time::{Duration, Instant};
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
@@ -197,6 +199,11 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
+    // Initialize SDL2 game controller subsystem
+    let controller_subsystem = sdl_context.game_controller().unwrap();
+    let mut controller_mgr = SdlControllerManager::new(controller_subsystem);
+    let keyboard_ctrl = KeyboardController::atari_default();
+
     // Initialize SDL2 audio (44100 Hz mono i16)
     let audio_subsystem = sdl_context.audio().unwrap();
     let desired_spec = AudioSpecDesired {
@@ -304,19 +311,12 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
         let host_alt = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LAlt) ||
                       keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RAlt);
 
-        // Update joystick Option key state and directions (only when console is hidden)
+        // Unified controller input: clear, merge gamepad + keyboard, push to hardware
         if !console.visible {
-            atari800.set_joystick_option(host_alt);
-            if host_alt {
-                let up = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up);
-                let down = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down);
-                let left = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left);
-                let right = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right);
-                let trigger = keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Slash);
-
-                atari800.handle_joystick_direction(up, down, left, right);
-                atari800.handle_joystick_trigger(trigger);
-            }
+            atari800.controller_input.clear();
+            controller_mgr.read_states(&mut atari800.controller_input.ports);
+            keyboard_ctrl.read_states(&keyboard_state, &mut atari800.controller_input.ports);
+            atari800.update_controller_state();
         }
 
         // Handle events
@@ -396,6 +396,14 @@ fn run_with_sdl(machine_type: MachineType, speed_limit_initial: bool, cart_path:
                             atari800.handle_key_press(event.key_code, event.shift, event.ctrl);
                         }
                     }
+                }
+
+                Event::ControllerDeviceAdded { which, .. } => {
+                    controller_mgr.handle_device_added(which);
+                }
+
+                Event::ControllerDeviceRemoved { which, .. } => {
+                    controller_mgr.handle_device_removed(which);
                 }
 
                 Event::KeyUp { scancode: Some(scancode), .. } if !console.visible => {
