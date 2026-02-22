@@ -62,7 +62,7 @@ fn test_hitclr_clears_collisions() {
     }
 
     // Render the scanline to trigger collisions
-    gtia.render_scanline(100, &scanline, 0x02, None);
+    gtia.render_scanline(100, &scanline, 0x02);
 
     // Check that collision was detected
     let p0pf = gtia.read_register(0xD004);
@@ -109,7 +109,7 @@ fn test_player_to_playfield_collision() {
     }
 
     // Render the scanline
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // Check P0PF collision register
     let p0pf = gtia.read_register(0xD004);
@@ -134,7 +134,7 @@ fn test_player_to_player_collision() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // Check P0PL and P1PL collision registers
     let p0pl = gtia.read_register(0xD00C);
@@ -163,7 +163,7 @@ fn test_missile_rendering() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // Verify framebuffer has missile pixels
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
@@ -187,7 +187,7 @@ fn test_gractl_disable_players() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // Get background color for comparison
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
@@ -196,7 +196,7 @@ fn test_gractl_disable_players() {
     // Now enable players and render again
     gtia.write_register(0xD01D, 0b10);
     gtia.clear_framebuffer();
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     let (p_r, p_g, p_b) = gtia.framebuffer.get_pixel(136, 50);
 
@@ -227,7 +227,7 @@ fn test_priority_mode_0() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // At position 104 (where both player and playfield exist),
     // player should be visible (mode 0 = PM in front)
@@ -260,7 +260,7 @@ fn test_priority_mode_3() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02, None);
+    gtia.render_scanline(50, &scanline, 0x02);
 
     // At position 100 (where both player and playfield exist),
     // playfield should be visible (mode 3 = PF in front)
@@ -272,6 +272,8 @@ fn test_priority_mode_3() {
 
 #[test]
 fn test_vdelay_player() {
+    // VDELAY only affects DMA mode: on even scanlines with VDELAY set,
+    // the DMA write to GRAFP is skipped, so the register retains its previous value.
     let mut gtia = Gtia::new();
 
     // Enable players
@@ -280,39 +282,45 @@ fn test_vdelay_player() {
     // Set up player 0 at position 100
     gtia.write_register(0xD000, 100);  // HPOSP0
     gtia.write_register(0xD008, 0x00); // SIZEP0 = 1x
-    gtia.write_register(0xD00D, 0xFF); // GRAFP0 = all bits
     gtia.write_register(0xD012, 0xFE); // COLPM0 = bright color
 
     // Enable VDELAY for player 0
-    gtia.write_register(0xD01C, 0x01); // VDELAY bit 0 = P0
+    gtia.write_register(0xD01C, 0x10); // VDELAY bit 4 = P0
 
+    // GRAFP0 starts at 0 (no graphics)
     let scanline = [0u8; 384];
-
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
 
-    // Render even scanline (0) - should use delayed value (initially 0)
-    gtia.render_scanline(0, &scanline, 0x02, None);
+    // DMA data with P0 = 0xFF
+    let pm_dma: [u8; 5] = [0x00, 0xFF, 0x00, 0x00, 0x00];
+
+    // Even scanline (0) with VDELAY: DMA write to GRAFP0 should be SKIPPED
+    // GRAFP0 remains 0, so player should be dark
+    gtia.apply_pm_dma(&pm_dma, 0);
+    gtia.render_scanline(0, &scanline, 0x02);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
-    // Render odd scanline (1) - should use current value (0xFF) and store it
-    gtia.render_scanline(1, &scanline, 0x02, None);
+    // Odd scanline (1): DMA write to GRAFP0 should succeed (0xFF)
+    gtia.apply_pm_dma(&pm_dma, 1);
+    gtia.render_scanline(1, &scanline, 0x02);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
-    // Render even scanline (2) - should now use delayed value (0xFF from odd scanline)
-    gtia.render_scanline(2, &scanline, 0x02, None);
+    // Even scanline (2) with VDELAY: DMA write skipped, GRAFP0 retains 0xFF from scanline 1
+    gtia.apply_pm_dma(&pm_dma, 2);
+    gtia.render_scanline(2, &scanline, 0x02);
     let (r2, g2, b2) = gtia.framebuffer.get_pixel(136, 2);
 
-    // Even scanline 0: delayed value is 0 (not set yet), so should be dark
+    // Even scanline 0: GRAFP0 was 0 (DMA skipped), so should be dark
     assert!(r0 < 100 && g0 < 100 && b0 < 100,
-        "Even scanline 0 should be dark (delayed value not set yet): RGB({},{},{})", r0, g0, b0);
+        "Even scanline 0 should be dark (VDELAY skipped DMA write): RGB({},{},{})", r0, g0, b0);
 
-    // Odd scanline 1: current value is 0xFF, so should be bright
+    // Odd scanline 1: DMA wrote 0xFF to GRAFP0, so should be bright
     assert!(r1 > 200 || g1 > 200 || b1 > 200,
-        "Odd scanline 1 should be bright (current value 0xFF): RGB({},{},{})", r1, g1, b1);
+        "Odd scanline 1 should be bright (DMA wrote 0xFF): RGB({},{},{})", r1, g1, b1);
 
-    // Even scanline 2: delayed value from scanline 1 (0xFF), so should be bright
+    // Even scanline 2: GRAFP0 retains 0xFF (DMA skipped), so should be bright
     assert!(r2 > 200 || g2 > 200 || b2 > 200,
-        "Even scanline 2 should be bright (delayed from scanline 1): RGB({},{},{})", r2, g2, b2);
+        "Even scanline 2 should be bright (retained 0xFF from scanline 1): RGB({},{},{})", r2, g2, b2);
 }
 
 #[test]
@@ -336,10 +344,10 @@ fn test_vdelay_disabled() {
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
 
     // Render even and odd scanlines
-    gtia.render_scanline(0, &scanline, 0x02, None);
+    gtia.render_scanline(0, &scanline, 0x02);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
-    gtia.render_scanline(1, &scanline, 0x02, None);
+    gtia.render_scanline(1, &scanline, 0x02);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
     // Both should be bright (no delay, always use current value)

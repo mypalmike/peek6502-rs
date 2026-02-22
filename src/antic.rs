@@ -220,8 +220,12 @@ impl Antic {
         // Note: We no longer skip when PMBASE==0 because the OS sets PMBASE during
         // boot and programs may legitimately use low PM base addresses
 
-        // Calculate base address from PMBASE
-        let pm_base = (self.pmbase as u16) << 8;
+        // Calculate base address from PMBASE with alignment masking
+        let pm_base = if single_line_mode {
+            ((self.pmbase & 0xF8) as u16) << 8
+        } else {
+            ((self.pmbase & 0xFC) as u16) << 8
+        };
 
         // Calculate scanline offset using the passed scanline parameter.
         // On real hardware, PM memory is indexed by the physical scanline counter.

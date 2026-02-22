@@ -53,10 +53,6 @@ pub struct Gtia {
     grafp: [u8; 4],     // $D00D-$D010 write - Player graphics patterns
     grafm: u8,          // $D011 write - Missile graphics (2 bits per missile)
 
-    // Vertical delay support
-    grafp_delayed: [u8; 4],  // Previous scanline's GRAFP values
-    grafm_delayed: u8,       // Previous scanline's GRAFM value
-
     // Paddle/joystick triggers (read-only)
     trig: [u8; 4],      // $D010-$D013
 
@@ -110,8 +106,6 @@ impl Gtia {
             sizem: 0,
             grafp: [0; 4],
             grafm: 0,
-            grafp_delayed: [0; 4],
-            grafm_delayed: 0,
             trig: [1, 1, 1, 0],   // TRIG0-2: 1 (not pressed), TRIG3: 0 (no cartridge present)
             pixel_x: 0,
             pixel_y: 0,
@@ -298,23 +292,66 @@ impl Gtia {
         self.framebuffer.clear();
     }
 
+    /// Apply PM DMA data to GRAFP/GRAFM registers, matching real hardware behavior.
+    /// On real hardware, ANTIC DMA writes directly to the GRAFP/GRAFM registers.
+    /// VDELAY causes even-scanline DMA writes to be skipped (register retains previous value).
+    /// pm_dma_data: [Missiles, P0, P1, P2, P3] from ANTIC DMA
+    /// scanline: current visible scanline number
+    pub fn apply_pm_dma(&mut self, pm_dma_data: &[u8; 5], scanline: usize) {
+        let is_odd_scanline = (scanline & 1) != 0;
+
+        // Players: GRACTL bit 1 enables player DMA writes to GRAFP
+        if (self.gractl & 0b10) != 0 {
+            for p in 0..4 {
+                let vdelay_bit = 0x10 << p;
+                if is_odd_scanline || (self.vdelay & vdelay_bit) == 0 {
+                    // Odd scanline: always write DMA data
+                    // Even scanline without VDELAY: write DMA data
+                    self.grafp[p] = pm_dma_data[1 + p];
+                }
+                // Even scanline with VDELAY: skip write, register retains previous value
+            }
+        }
+
+        // Missiles: GRACTL bit 0 enables missile DMA writes to GRAFM
+        if (self.gractl & 0b01) != 0 {
+            // Missile VDELAY uses bits 0-3 of VDELAY register
+            // Each bit controls one missile's 2-bit field in GRAFM
+            // On even scanlines, masked missile bits retain their previous value
+            if is_odd_scanline {
+                // Odd scanline: always write all missile data
+                self.grafm = pm_dma_data[0];
+            } else {
+                // Even scanline: selectively update based on per-missile VDELAY
+                let mut new_grafm = self.grafm;
+                for m in 0..4 {
+                    let vdelay_bit = 1 << m;  // VDELAY bits 0-3 = missiles 0-3
+                    let mask = 0x03u8 << (m * 2);   // 2-bit mask for this missile
+                    if (self.vdelay & vdelay_bit) == 0 {
+                        // No VDELAY for this missile: update from DMA
+                        new_grafm = (new_grafm & !mask) | (pm_dma_data[0] & mask);
+                    }
+                    // VDELAY set: keep previous value (don't update this missile's bits)
+                }
+                self.grafm = new_grafm;
+            }
+        }
+    }
+
     /// Generate PM graphics for the current scanline
     /// Fills pm_scanline buffer with PM object bits
-    /// scanline_y: current scanline number (used for VDELAY)
-    /// pm_dma_data: optional PM data from ANTIC DMA (if None, uses GRAFP/GRAFM registers)
+    /// Always reads from GRAFP/GRAFM registers (DMA data should already be applied via apply_pm_dma)
     ///
     /// Coordinate system: HPOS values are in color clocks (0-255).
     /// The visible playfield starts at color clock 48 and is 160 color clocks wide.
     /// Each color clock = 2 hi-res pixels, so we double the width and offset.
-    fn generate_pm_scanline(&mut self, scanline_y: usize, pm_dma_data: Option<&[u8; 5]>) {
+    fn generate_pm_scanline(&mut self) {
         // Clear PM scanline buffer
         self.pm_scanline = [0; 384];
 
         // Check if PM graphics are enabled
         let players_enabled = (self.gractl & 0b10) != 0;
         let missiles_enabled = (self.gractl & 0b01) != 0;
-
-        let is_even_scanline = (scanline_y & 1) == 0;
 
         // PM coordinate offset: HPOS 48 = left edge of normal playfield = screen pixel 0
         // Each color clock = 2 hi-res pixels
@@ -329,28 +366,8 @@ impl Gtia {
                 let screen_x = (hpos - PM_HPOS_OFFSET) * 2;
                 let size_mode = (self.sizep[p] & 0x03) as usize;
 
-                // Determine which graphics to use
-                let graf = if let Some(dma_data) = pm_dma_data {
-                    // Use PM DMA data from ANTIC (DMA mode takes precedence)
-                    dma_data[1 + p]
-                } else {
-                    // Use GRAFP registers (register mode)
-                    // Check if this player has VDELAY enabled
-                    let vdelay_enabled = (self.vdelay & (1 << p)) != 0;
-
-                    if vdelay_enabled && is_even_scanline {
-                        // Even scanline with VDELAY: use delayed (previous) value
-                        self.grafp_delayed[p]
-                    } else {
-                        // Odd scanline or no VDELAY: use current value
-                        let current_graf = self.grafp[p];
-                        // Store for next even scanline
-                        if vdelay_enabled && !is_even_scanline {
-                            self.grafp_delayed[p] = current_graf;
-                        }
-                        current_graf
-                    }
-                };
+                // Always read from GRAFP registers
+                let graf = self.grafp[p];
 
                 // Expand graphics pattern using lookup table
                 let expanded = self.grafp_lookup[size_mode][graf as usize];
@@ -384,28 +401,8 @@ impl Gtia {
 
         // Render missiles (if enabled)
         if missiles_enabled {
-            // Determine which missile graphics to use
-            let grafm = if let Some(dma_data) = pm_dma_data {
-                // Use PM DMA data from ANTIC (DMA mode takes precedence)
-                dma_data[0]
-            } else {
-                // Use GRAFM register (register mode)
-                // Check if missiles have VDELAY enabled (bits 4-7 of VDELAY)
-                let missile_vdelay = self.vdelay >> 4;
-
-                if missile_vdelay != 0 && is_even_scanline {
-                    // Even scanline with VDELAY: use delayed value
-                    self.grafm_delayed
-                } else {
-                    // Odd scanline or no VDELAY: use current value
-                    let current_grafm = self.grafm;
-                    // Store for next even scanline
-                    if missile_vdelay != 0 && !is_even_scanline {
-                        self.grafm_delayed = current_grafm;
-                    }
-                    current_grafm
-                }
-            };
+            // Always read from GRAFM register
+            let grafm = self.grafm;
 
             for m in 0..4 {
                 // Convert HPOS (color clocks) to screen pixels
@@ -448,12 +445,12 @@ impl Gtia {
     /// Colorize an ANTIC scanline and write to framebuffer
     /// Called once per scanline during frame rendering
     /// antic_mode: current ANTIC display mode (needed for GTIA mode 9/10/11 detection)
-    /// pm_dma_data: optional PM data from ANTIC DMA (if None, uses GRAFP/GRAFM registers)
-    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8, pm_dma_data: Option<&[u8; 5]>) {
+    /// Note: PM DMA data should be applied to registers via apply_pm_dma() before calling this
+    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8) {
         let gtia_mode = (self.prior >> 6) & 0x03;
 
-        // Generate PM graphics for this scanline
-        self.generate_pm_scanline(scanline_y, pm_dma_data);
+        // Generate PM graphics for this scanline (reads from GRAFP/GRAFM registers)
+        self.generate_pm_scanline();
 
         // GTIA modes 9/10/11: reinterpret ANTIC mode F data
         if gtia_mode != 0 && antic_mode == 0x0F {

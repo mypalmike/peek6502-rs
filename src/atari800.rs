@@ -671,46 +671,6 @@ impl Atari800 {
             self.gtia.clear_framebuffer();
             self.pokey.audio_buffer.start_frame();
             self.master_cycle += 1;
-            if self.master_cycle <= 5 || self.master_cycle % 60 == 0 {
-                let dmactl = self.antic.get_dmactl();
-                let nmien = self.antic.get_nmien();
-                let dlistl = ReadBus::read(&self.memory, 0x0230);
-                let dlisth = ReadBus::read(&self.memory, 0x0231);
-                let sdmctl = ReadBus::read(&self.memory, 0x022F);
-                let pc = self.cpu.pc;
-                eprintln!("Frame {}: PC=${:04X} DMACTL=${:02X} SDMCTL=${:02X} NMIEN=${:02X} SDLSTL=${:02X}{:02X} CHBASE=${:02X}",
-                    self.master_cycle, pc, dmactl, sdmctl, nmien, dlisth, dlistl, self.antic.get_chbase());
-                // ANTIC hardware DL pointer
-                let hw_dlistl = self.antic.read_register(0xD402);
-                let hw_dlisth = self.antic.read_register(0xD403);
-                eprintln!("  HW DLIST=${:02X}{:02X}", hw_dlisth, hw_dlistl);
-                // Dump first 16 bytes of display list
-                let dlist_addr = (dlisth as u16) << 8 | dlistl as u16;
-                let mut dlist_bytes = String::new();
-                for i in 0..16 {
-                    dlist_bytes.push_str(&format!("{:02X} ", ReadBus::read(&self.memory, dlist_addr + i)));
-                }
-                eprintln!("  DList@${:04X}: {}", dlist_addr, dlist_bytes);
-                // VBI vectors
-                let vvblki = ReadBus::read(&self.memory, 0x0222) as u16 | (ReadBus::read(&self.memory, 0x0223) as u16) << 8;
-                let vvblkd = ReadBus::read(&self.memory, 0x0224) as u16 | (ReadBus::read(&self.memory, 0x0225) as u16) << 8;
-                eprintln!("  VVBLKI=${:04X} VVBLKD=${:04X}", vvblki, vvblkd);
-                // Dump color registers from GTIA shadow
-                let colbk = ReadBus::read(&self.memory, 0x02C8);
-                let colpf0 = ReadBus::read(&self.memory, 0x02C4);
-                let colpf1 = ReadBus::read(&self.memory, 0x02C5);
-                let colpf2 = ReadBus::read(&self.memory, 0x02C6);
-                let colpf3 = ReadBus::read(&self.memory, 0x02C7);
-                eprintln!("  Colors: BK=${:02X} PF0=${:02X} PF1=${:02X} PF2=${:02X} PF3=${:02X}",
-                    colbk, colpf0, colpf1, colpf2, colpf3);
-                // System timers and RTCLOK
-                let rtclok0 = ReadBus::read(&self.memory, 0x0012);
-                let rtclok1 = ReadBus::read(&self.memory, 0x0013);
-                let rtclok2 = ReadBus::read(&self.memory, 0x0014);
-                let cdtmv3 = ReadBus::read(&self.memory, 0x021C) as u16
-                    | (ReadBus::read(&self.memory, 0x021D) as u16) << 8;
-                eprintln!("  RTCLOK={:02X}{:02X}{:02X} CDTMV3={}", rtclok0, rtclok1, rtclok2, cdtmv3);
-            }
         }
 
         let current_scanline = self.antic.scanline;
@@ -718,6 +678,15 @@ impl Atari800 {
         for _cycle in 0..114u32 {
             // Tick ANTIC
             self.antic.tick(&self.memory);
+
+            // Apply PM DMA at cycle 0, right after ANTIC fetches PM data
+            // This must happen BEFORE the CPU runs so DLI handlers can override GRAFP
+            if _cycle == 0 && current_scanline < 240 {
+                let dmactl = self.antic.get_dmactl();
+                if (dmactl & 0x0C) != 0 {
+                    self.gtia.apply_pm_dma(&self.antic.pm_data, current_scanline as usize);
+                }
+            }
 
             // Update NMI line from ANTIC and PIA
             self.nmi_line = self.antic.is_nmi_asserted() || self.pia.is_nmi_asserted();
@@ -753,12 +722,13 @@ impl Atari800 {
         self.pokey.generate_audio(114);
 
         // GTIA composites after CPU had chance to run DLI handler
+        // PM DMA was already applied at cycle 0 (before CPU ran), so DLI handler
+        // modifications to GRAFP/GRAFM/HPOS are preserved in the final render.
         if current_scanline < 240 {
             self.gtia.render_scanline(
                 current_scanline as usize,
                 &self.antic.scanline_buffer,
                 self.antic.get_current_mode(),
-                Some(&self.antic.pm_data),
             );
         }
 
@@ -906,8 +876,13 @@ impl Atari800 {
             self.antic.process_scanline(&self.memory);
             // Fetch PM graphics from memory via DMA (pass current scanline for correct offset)
             self.antic.fetch_pm_data(&self.memory, scanline);
-            // Render the scanline with PM DMA data
-            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode(), Some(&self.antic.pm_data));
+            // Apply PM DMA data to GRAFP/GRAFM registers (matching real hardware)
+            let dmactl = self.antic.get_dmactl();
+            if (dmactl & 0x0C) != 0 {
+                self.gtia.apply_pm_dma(&self.antic.pm_data, scanline);
+            }
+            // Render the scanline
+            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode());
         }
     }
 
