@@ -52,6 +52,10 @@ pub struct Antic {
 
     // DLI (Display List Interrupt) flag from current display list instruction
     has_dli: bool,
+
+    // Scroll bits from current display list instruction
+    has_hsc: bool,  // HSC bit (bit 4) - horizontal fine scroll enabled
+    has_vsc: bool,  // VSC bit (bit 5) - vertical fine scroll enabled (future use)
 }
 
 impl Antic {
@@ -84,6 +88,8 @@ impl Antic {
             scanline_buffer: [0; 384],
             pm_data: [0; 5],
             has_dli: false,
+            has_hsc: false,
+            has_vsc: false,
         }
     }
 
@@ -353,27 +359,32 @@ impl Antic {
         }
 
         // Generate scanline data based on current mode
+        let hsc_extra = self.hsc_extra_bytes();
         match self.current_mode {
             0x00 => {} // Blank line - already filled with 0
             0x02 | 0x03 => self.render_text_hires(bus),
             0x04 | 0x05 => self.render_text_multicolor(bus),
             0x06 | 0x07 => self.render_text_wide(bus),
-            0x08 => self.render_bitmap_1bpp(bus, 40, 1, 2, 0),
-            0x09 => self.render_bitmap_1bpp(bus, 20, 4, 1, 0),
-            0x0A => self.render_bitmap_2bpp(bus, 20, 4),
-            0x0B => self.render_bitmap_1bpp(bus, 20, 2, 2, 0),
-            0x0C => self.render_bitmap_1bpp(bus, 20, 2, 2, 0),
-            0x0D => self.render_bitmap_2bpp(bus, 40, 2),
-            0x0E => self.render_bitmap_2bpp(bus, 40, 2),
-            0x0F => self.render_bitmap_1bpp(bus, 40, 1, 2, 0),
+            0x08 => self.render_bitmap_1bpp(bus, 40 + hsc_extra, 1, 2, 0),
+            0x09 => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 4, 1, 0),
+            0x0A => self.render_bitmap_2bpp(bus, 20 + hsc_extra, 4),
+            0x0B => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 2, 2, 0),
+            0x0C => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 2, 2, 0),
+            0x0D => self.render_bitmap_2bpp(bus, 40 + hsc_extra, 2),
+            0x0E => self.render_bitmap_2bpp(bus, 40 + hsc_extra, 2),
+            0x0F => self.render_bitmap_1bpp(bus, 40 + hsc_extra, 1, 2, 0),
             _ => {}
         }
+
+        // Apply horizontal fine scroll offset
+        self.apply_hscrol();
 
         // Move to next line and advance screen pointer on last scanline of row
         if self.lines_remaining > 0 {
             let (scanlines, bytes_per_row) = Self::mode_info(self.current_mode);
+            let hsc_extra = self.hsc_extra_bytes();
             if self.mode_line == scanlines - 1 && self.current_mode >= 0x02 {
-                self.screen_ptr = self.screen_ptr.wrapping_add(bytes_per_row);
+                self.screen_ptr = self.screen_ptr.wrapping_add(bytes_per_row + hsc_extra);
             }
             self.lines_remaining -= 1;
             self.mode_line += 1;
@@ -398,6 +409,10 @@ impl Antic {
 
         // Check for DLI (Display List Interrupt) bit (bit 7)
         self.has_dli = (instruction & 0x80) != 0;
+
+        // Parse scroll bits (only meaningful for modes >= 0x02)
+        self.has_hsc = (instruction & 0x10) != 0 && mode >= 0x02;
+        self.has_vsc = (instruction & 0x20) != 0 && mode >= 0x02;
 
         // Check for JVB (Jump with Vertical Blank) instruction
         if mode == 0x01 {
@@ -438,6 +453,35 @@ impl Antic {
         };
     }
 
+    /// Returns extra bytes to fetch when HSC (horizontal scroll) is enabled.
+    /// When scrolling, ANTIC fetches one width class wider than normal.
+    fn hsc_extra_bytes(&self) -> u16 {
+        if !self.has_hsc {
+            return 0;
+        }
+        let (_scanlines, bytes_per_row) = Self::mode_info(self.current_mode);
+        match bytes_per_row {
+            40 => 8,  // Normal → wide: fetch 48 bytes
+            20 => 4,  // Narrow → normal: fetch 24 bytes
+            _ => 0,
+        }
+    }
+
+    /// Apply HSCROL fine scroll offset by shifting scanline buffer left.
+    /// On real hardware, HSCROL=0 means maximum offset (4 chars into extra data),
+    /// and HSCROL=15 means minimum offset. Higher HSCROL shifts display RIGHT.
+    /// Each HSCROL unit = 1 color clock = 2 hi-res pixels in the buffer.
+    fn apply_hscrol(&mut self) {
+        if !self.has_hsc {
+            return;
+        }
+        // Invert: HSCROL=0 → max shift (32px), HSCROL=15 → min shift (2px)
+        let shift = (16 - (self.hscrol & 0x0F) as usize) * 2;
+        self.scanline_buffer.copy_within(shift.., 0);
+        let len = self.scanline_buffer.len();
+        self.scanline_buffer[len - shift..].fill(0);
+    }
+
     /// Get character set base address
     fn char_base(&self) -> u16 {
         if self.chbase == 0 {
@@ -452,8 +496,9 @@ impl Antic {
     /// Mode 3: 40 chars, 10 scanlines/row, lowercase descenders
     fn render_text_hires(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
+        let extra = self.hsc_extra_bytes();
 
-        for char_col in 0u16..40 {
+        for char_col in 0u16..(40 + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
@@ -495,6 +540,7 @@ impl Antic {
     /// Colors: 00=COLBK, 01=COLPF0, 10=COLPF1, 11=COLPF2 (or COLPF3 if inverse)
     fn render_text_multicolor(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
+        let extra = self.hsc_extra_bytes();
         // Mode 5 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
         // Mode 4 (8 scanlines/row) = single-height
         let font_row = if self.current_mode == 0x05 {
@@ -503,7 +549,7 @@ impl Antic {
             self.mode_line as u16
         };
 
-        for char_col in 0u16..40 {
+        for char_col in 0u16..(40 + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
@@ -535,6 +581,7 @@ impl Antic {
     /// Each pixel is 2 color clocks wide = 160 visible pixels
     fn render_text_wide(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
+        let extra = self.hsc_extra_bytes();
         // Mode 7 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
         // Mode 6 (8 scanlines/row) = single-height
         let font_row = if self.current_mode == 0x07 {
@@ -543,7 +590,7 @@ impl Antic {
             self.mode_line as u16
         };
 
-        for char_col in 0u16..20 {
+        for char_col in 0u16..(20 + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let color_select = (char_code >> 6) & 0x03;
             let font_index = (char_code & 0x3F) as u16;
