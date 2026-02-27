@@ -516,80 +516,63 @@ impl Gtia {
 
     /// Composite a pixel using PM graphics and playfield with priority
     /// Returns final color index (0-8)
+    ///
+    /// PRIOR register bits 0-3 select one of four priority modes (one bit set at a time):
+    ///   $01: PM0 > PM1 > PM2 > PM3 > PF0 > PF1 > PF2 > PF3 > BAK
+    ///   $02: PM0 > PM1 > PF0 > PF1 > PF2 > PF3 > PM2 > PM3 > BAK
+    ///   $04: PF0 > PF1 > PM0 > PM1 > PM2 > PM3 > PF2 > PF3 > BAK
+    ///   $08: PF0 > PF1 > PF2 > PF3 > PM0 > PM1 > PM2 > PM3 > BAK
+    ///   $00: default, same as $01
     fn composite_pixel(&self, pf_index: u8, pm_bits: u8) -> u8 {
-        // Extract individual PM bits
-        let m0 = (pm_bits & 0x01) != 0;
-        let m1 = (pm_bits & 0x02) != 0;
-        let m2 = (pm_bits & 0x04) != 0;
-        let m3 = (pm_bits & 0x08) != 0;
-        let p0 = (pm_bits & 0x10) != 0;
-        let p1 = (pm_bits & 0x20) != 0;
-        let p2 = (pm_bits & 0x40) != 0;
-        let p3 = (pm_bits & 0x80) != 0;
+        // Extract PM group presence and colors
+        // PM0/1 group: P0 > P1 > M0 > M1
+        let pm01_color = if (pm_bits & 0x10) != 0 { 5 }  // P0
+            else if (pm_bits & 0x20) != 0 { 6 }           // P1
+            else if (pm_bits & 0x01) != 0 { 5 }           // M0 (uses COLPM0)
+            else if (pm_bits & 0x02) != 0 { 6 }           // M1 (uses COLPM1)
+            else { 0 };
+        // PM2/3 group: P2 > P3 > M2 > M3
+        let pm23_color = if (pm_bits & 0x40) != 0 { 7 }   // P2
+            else if (pm_bits & 0x80) != 0 { 8 }            // P3
+            else if (pm_bits & 0x04) != 0 { 7 }            // M2 (uses COLPM2)
+            else if (pm_bits & 0x08) != 0 { 8 }            // M3 (uses COLPM3)
+            else { 0 };
 
-        let any_pm = pm_bits != 0;
-        let any_pf = pf_index > 0;
+        let has_pm01 = pm01_color != 0;
+        let has_pm23 = pm23_color != 0;
+        let has_pf01 = pf_index == 1 || pf_index == 2;
+        let has_pf = pf_index > 0;
 
-        // Get priority mode from PRIOR register bits 0-1
-        let priority_mode = self.prior & 0x03;
+        // Priority mode from individual bits 0-3 (lowest set bit wins)
+        let priority_bits = self.prior & 0x0F;
 
-        match priority_mode {
-            // Mode 0: All PM in front of all playfield
-            0 => {
-                if p0 { 5 }
-                else if p1 { 6 }
-                else if p2 { 7 }
-                else if p3 { 8 }
-                else if m0 { 5 }
-                else if m1 { 6 }
-                else if m2 { 7 }
-                else if m3 { 8 }
-                else { pf_index }
-            }
-            // Mode 1: P0-P1/M0-M1 in front, playfield, then P2-P3/M2-M3 behind
-            1 => {
-                if p0 { 5 }
-                else if p1 { 6 }
-                else if m0 { 5 }
-                else if m1 { 6 }
-                else if any_pf { pf_index }
-                else if p2 { 7 }
-                else if p3 { 8 }
-                else if m2 { 7 }
-                else if m3 { 8 }
-                else { 0 }
-            }
-            // Mode 2: PF0-PF1 in front, all PM, then PF2-PF3 behind
-            2 => {
-                if pf_index == 1 || pf_index == 2 { pf_index }
-                else if any_pm {
-                    if p0 { 5 }
-                    else if p1 { 6 }
-                    else if p2 { 7 }
-                    else if p3 { 8 }
-                    else if m0 { 5 }
-                    else if m1 { 6 }
-                    else if m2 { 7 }
-                    else if m3 { 8 }
-                    else { pf_index }
-                } else {
-                    pf_index
-                }
-            }
-            // Mode 3: All playfield in front of all PM
-            3 => {
-                if any_pf { pf_index }
-                else if p0 { 5 }
-                else if p1 { 6 }
-                else if p2 { 7 }
-                else if p3 { 8 }
-                else if m0 { 5 }
-                else if m1 { 6 }
-                else if m2 { 7 }
-                else if m3 { 8 }
-                else { 0 }
-            }
-            _ => pf_index,
+        if priority_bits & 0x01 != 0 || priority_bits == 0 {
+            // $01 (or $00 default): All PM in front of all PF
+            // PM0 > PM1 > PM2 > PM3 > PF0 > PF1 > PF2 > PF3 > BAK
+            if has_pm01 { pm01_color }
+            else if has_pm23 { pm23_color }
+            else { pf_index }
+        } else if priority_bits & 0x02 != 0 {
+            // $02: PM0/PM1 in front, then PF, then PM2/PM3 behind
+            // PM0 > PM1 > PF0 > PF1 > PF2 > PF3 > PM2 > PM3 > BAK
+            if has_pm01 { pm01_color }
+            else if has_pf { pf_index }
+            else if has_pm23 { pm23_color }
+            else { 0 }
+        } else if priority_bits & 0x04 != 0 {
+            // $04: PF0/PF1 in front, then all PM, then PF2/PF3 behind
+            // PF0 > PF1 > PM0 > PM1 > PM2 > PM3 > PF2 > PF3 > BAK
+            if has_pf01 { pf_index }
+            else if has_pm01 { pm01_color }
+            else if has_pm23 { pm23_color }
+            else { pf_index } // PF2/PF3 or BAK
+        } else {
+            // $08: All PF in front of all PM
+            // PF0 > PF1 > PF2 > PF3 > PM0 > PM1 > PM2 > PM3 > BAK
+            if has_pf { pf_index }
+            else if has_pm01 { pm01_color }
+            else if has_pm23 { pm23_color }
+            else { 0 }
         }
     }
 
