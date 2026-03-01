@@ -33,7 +33,7 @@ pub struct Antic {
     vscrol: u8,     // $D405 - Vertical scroll
     pmbase: u8,     // $D407 - Player/missile base address
     chbase: u8,     // $D409 - Character set base address
-    wsync: u8,      // $D40A - Wait for horizontal sync
+    pub wsync_halt: bool,  // $D40A - CPU halted until end of scanline
     vcount: u8,     // $D40B - Vertical line counter
     penh: u8,       // $D40C - Light pen horizontal position
     penv: u8,       // $D40D - Light pen vertical position
@@ -78,7 +78,7 @@ impl Antic {
             vscrol: 0,
             pmbase: 0,
             chbase: 0,
-            wsync: 0,
+            wsync_halt: false,
             vcount: 0,
             penh: 0,
             penv: 0,
@@ -111,15 +111,17 @@ impl Antic {
             // writes NMIRES ($D40F). The OS NMI handler reads NMIST to distinguish
             // DLI (bit 7) from VBI (bit 6).
 
-            // Reset display list at start of visible area
+            // Reset display list at start of frame
             if self.scanline == 0 {
                 self.start_frame();
             }
 
-            // Visible scanlines: process display list and render (only when DMA enabled)
-            if self.scanline < 240 && self.dma_enabled {
+            // Display list processing starts at scanline 8 (after top overscan).
+            // On real hardware, scanlines 0-7 are blank with no DMA.
+            // This ensures DLIs fire at correct scanlines relative to VCOUNT.
+            if self.scanline >= 8 && self.scanline < 248 && self.dma_enabled {
                 self.process_scanline(bus);
-                self.fetch_pm_data(bus, self.scanline as usize);
+                self.fetch_pm_data(bus, (self.scanline - 8) as usize);
             }
 
             // VBI at scanline 248
@@ -135,6 +137,7 @@ impl Antic {
         // End of scanline — advance to next
         if self.horizontal_pos >= 114 {
             self.horizontal_pos = 0;
+            self.wsync_halt = false;  // Release CPU at start of next scanline
             self.scanline = (self.scanline + 1) % 262;
             self.vcount = (self.scanline / 2) as u8;
         }
@@ -177,7 +180,7 @@ impl Antic {
             0x05 => self.vscrol = val,
             0x07 => self.pmbase = val,
             0x09 => self.chbase = val,
-            0x0A => self.wsync = val,   // CPU write to WSYNC halts until HSYNC
+            0x0A => self.wsync_halt = true,   // CPU write halts until end of scanline
             0x0E => {
                 self.nmien = val;
             }

@@ -40,8 +40,8 @@ pub struct Cpu {
     pub trace_remaining: u32,       // Number of instructions to trace (0 = no trace)
 
     // NMI edge detection (NMI is edge-triggered, not level-triggered like IRQ)
-    nmi_prev: bool,                 // Previous NMI line state (for edge detection)
-    nmi_pending: bool,              // Latched NMI waiting to be serviced
+    nmi_prev: bool,             // Previous NMI line state (for edge detection)
+    nmi_pending: bool,          // Latched NMI waiting to be serviced
 }
 
 #[allow(dead_code)]
@@ -440,26 +440,51 @@ impl Cpu {
 
     /// Print trace output for debugging (shows PC, registers, and key zero-page vectors)
     fn print_trace(&self, bus: &mut dyn Bus) {
-        // Read key zero-page locations (OS vectors)
-        let _vec_0200 = bus.read_word(0x0200);  // Immediate VBI vector
-        let _vec_0216 = bus.read_word(0x0216);  // Main loop vector
-        let _vec_0222 = bus.read_word(0x0222);  // Deferred VBI vector
-
         // Read next opcode to help with control flow analysis
         let opcode = bus.read(self.pc);
         let operand1 = bus.read(self.pc.wrapping_add(1));
         let operand2 = bus.read(self.pc.wrapping_add(2));
 
-        // Identify key control flow instructions
-        let _opcode_desc = match opcode {
+        // Disassemble the instruction
+        let disasm = match opcode {
             0x20 => format!("JSR ${:02X}{:02X}", operand2, operand1),
             0x4C => format!("JMP ${:02X}{:02X}", operand2, operand1),
             0x6C => format!("JMP (${:02X}{:02X})", operand2, operand1),
             0x60 => "RTS".to_string(),
             0x40 => "RTI".to_string(),
             0x00 => "BRK".to_string(),
-            _ => format!("{:02X}", opcode),
+            0xAD => format!("LDA ${:02X}{:02X}", operand2, operand1),
+            0xAE => format!("LDX ${:02X}{:02X}", operand2, operand1),
+            0xAC => format!("LDY ${:02X}{:02X}", operand2, operand1),
+            0xA5 => format!("LDA ${:02X}", operand1),
+            0xA9 => format!("LDA #${:02X}", operand1),
+            0xC9 => format!("CMP #${:02X}", operand1),
+            0xCD => format!("CMP ${:02X}{:02X}", operand2, operand1),
+            0xC5 => format!("CMP ${:02X}", operand1),
+            0xD0 => format!("BNE ${:04X}", self.pc.wrapping_add(2).wrapping_add(operand1 as i8 as i16 as u16)),
+            0xF0 => format!("BEQ ${:04X}", self.pc.wrapping_add(2).wrapping_add(operand1 as i8 as i16 as u16)),
+            0x10 => format!("BPL ${:04X}", self.pc.wrapping_add(2).wrapping_add(operand1 as i8 as i16 as u16)),
+            0x30 => format!("BMI ${:04X}", self.pc.wrapping_add(2).wrapping_add(operand1 as i8 as i16 as u16)),
+            0x8D => format!("STA ${:02X}{:02X}", operand2, operand1),
+            0x85 => format!("STA ${:02X}", operand1),
+            0xEE => format!("INC ${:02X}{:02X}", operand2, operand1),
+            0xE6 => format!("INC ${:02X}", operand1),
+            0xCE => format!("DEC ${:02X}{:02X}", operand2, operand1),
+            0xC6 => format!("DEC ${:02X}", operand1),
+            0xEA => "NOP".to_string(),
+            _ => format!("{:02X} {:02X} {:02X}", opcode, operand1, operand2),
         };
+
+        eprintln!("TRACE: ${:04X}: {:12} A={:02X} X={:02X} Y={:02X} S={:02X} P=[{}{}{}{}{}{}{}]",
+            self.pc, disasm, self.a, self.x, self.y, self.s,
+            if self.n { 'N' } else { '.' },
+            if self.v { 'V' } else { '.' },
+            if self.b { 'B' } else { '.' },
+            if self.d { 'D' } else { '.' },
+            if self.i { 'I' } else { '.' },
+            if self.z { 'Z' } else { '.' },
+            if self.c { 'C' } else { '.' },
+        );
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {

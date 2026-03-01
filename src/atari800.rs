@@ -681,39 +681,43 @@ impl Atari800 {
 
             // Apply PM DMA at cycle 0, right after ANTIC fetches PM data
             // This must happen BEFORE the CPU runs so DLI handlers can override GRAFP
-            if _cycle == 0 && current_scanline < 240 {
+            if _cycle == 0 && current_scanline >= 8 && current_scanline < 248 {
                 let dmactl = self.antic.get_dmactl();
                 if (dmactl & 0x0C) != 0 {
-                    self.gtia.apply_pm_dma(&self.antic.pm_data, current_scanline as usize);
+                    self.gtia.apply_pm_dma(&self.antic.pm_data, (current_scanline - 8) as usize);
                 }
             }
 
             // Update NMI line from ANTIC and PIA
             self.nmi_line = self.antic.is_nmi_asserted() || self.pia.is_nmi_asserted();
 
-            // Check for OS patches before executing CPU instruction
-            if self.patch_manager.has_patch(self.cpu.pc) {
-                if self.check_and_execute_patch() {
-                    self.pokey.tick();
-                    self.tick_sio();
-                    continue;
+            // CPU runs unless WSYNC is halting it
+            if !self.antic.wsync_halt {
+                // Check for OS patches before executing CPU instruction
+                if self.patch_manager.has_patch(self.cpu.pc) {
+                    if self.check_and_execute_patch() {
+                        self.pokey.tick();
+                        self.tick_sio();
+                        continue;
+                    }
+                }
+
+                // Execute one CPU cycle using SystemBus wrapper
+                {
+                    let mut bus = SystemBus {
+                        memory: &mut self.memory,
+                        gtia: &mut self.gtia,
+                        pokey: &mut self.pokey,
+                        pia: &mut self.pia,
+                        antic: &mut self.antic,
+                        nmi_line: self.nmi_line,
+                        sio_controller: &mut self.sio_controller,
+                    };
+                    self.cpu.tick(&mut bus);
                 }
             }
 
-            // Execute one CPU cycle using SystemBus wrapper
-            {
-                let mut bus = SystemBus {
-                    memory: &mut self.memory,
-                    gtia: &mut self.gtia,
-                    pokey: &mut self.pokey,
-                    pia: &mut self.pia,
-                    antic: &mut self.antic,
-                    nmi_line: self.nmi_line,
-                    sio_controller: &mut self.sio_controller,
-                };
-                self.cpu.tick(&mut bus);
-            }
-
+            // POKEY and SIO still tick during WSYNC halt
             self.pokey.tick();
             self.tick_sio();
         }
@@ -724,9 +728,9 @@ impl Atari800 {
         // GTIA composites after CPU had chance to run DLI handler
         // PM DMA was already applied at cycle 0 (before CPU ran), so DLI handler
         // modifications to GRAFP/GRAFM/HPOS are preserved in the final render.
-        if current_scanline < 240 {
+        if current_scanline >= 8 && current_scanline < 248 {
             self.gtia.render_scanline(
-                current_scanline as usize,
+                (current_scanline - 8) as usize,
                 &self.antic.scanline_buffer,
                 self.antic.get_current_mode(),
             );
