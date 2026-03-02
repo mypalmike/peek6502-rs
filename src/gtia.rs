@@ -524,22 +524,31 @@ impl Gtia {
     ///   $08: PF0 > PF1 > PF2 > PF3 > PM0 > PM1 > PM2 > PM3 > BAK
     ///   $00: default, same as $01
     fn composite_pixel(&self, pf_index: u8, pm_bits: u8) -> u8 {
+        // 5th player mode: missiles combine into a single object using COLPF3
+        let (fifth_player, pm_bits_for_groups) = if self.prior & 0x10 != 0 {
+            (pm_bits & 0x0F != 0, pm_bits & 0xF0)
+        } else {
+            (false, pm_bits)
+        };
+
         // Extract PM group presence and colors
         // PM0/1 group: P0 > P1 > M0 > M1
-        let pm01_color = if (pm_bits & 0x10) != 0 { 5 }  // P0
-            else if (pm_bits & 0x20) != 0 { 6 }           // P1
-            else if (pm_bits & 0x01) != 0 { 5 }           // M0 (uses COLPM0)
-            else if (pm_bits & 0x02) != 0 { 6 }           // M1 (uses COLPM1)
+        let pm01_color = if (pm_bits_for_groups & 0x10) != 0 { 5 }  // P0
+            else if (pm_bits_for_groups & 0x20) != 0 { 6 }           // P1
+            else if (pm_bits_for_groups & 0x01) != 0 { 5 }           // M0 (uses COLPM0)
+            else if (pm_bits_for_groups & 0x02) != 0 { 6 }           // M1 (uses COLPM1)
             else { 0 };
         // PM2/3 group: P2 > P3 > M2 > M3
-        let pm23_color = if (pm_bits & 0x40) != 0 { 7 }   // P2
-            else if (pm_bits & 0x80) != 0 { 8 }            // P3
-            else if (pm_bits & 0x04) != 0 { 7 }            // M2 (uses COLPM2)
-            else if (pm_bits & 0x08) != 0 { 8 }            // M3 (uses COLPM3)
+        let pm23_color = if (pm_bits_for_groups & 0x40) != 0 { 7 }   // P2
+            else if (pm_bits_for_groups & 0x80) != 0 { 8 }            // P3
+            else if (pm_bits_for_groups & 0x04) != 0 { 7 }            // M2 (uses COLPM2)
+            else if (pm_bits_for_groups & 0x08) != 0 { 8 }            // M3 (uses COLPM3)
             else { 0 };
 
-        let has_pm01 = pm01_color != 0;
+        let has_pm01 = pm01_color != 0 || fifth_player;
         let has_pm23 = pm23_color != 0;
+        // Resolve PM01 color: actual player color wins, then 5th player (COLPF3 = index 4)
+        let pm01_resolved = if pm01_color != 0 { pm01_color } else { 4 };
         let has_pf01 = pf_index == 1 || pf_index == 2;
         let has_pf = pf_index > 0;
 
@@ -549,13 +558,13 @@ impl Gtia {
         if priority_bits & 0x01 != 0 || priority_bits == 0 {
             // $01 (or $00 default): All PM in front of all PF
             // PM0 > PM1 > PM2 > PM3 > PF0 > PF1 > PF2 > PF3 > BAK
-            if has_pm01 { pm01_color }
+            if has_pm01 { pm01_resolved }
             else if has_pm23 { pm23_color }
             else { pf_index }
         } else if priority_bits & 0x02 != 0 {
             // $02: PM0/PM1 in front, then PF, then PM2/PM3 behind
             // PM0 > PM1 > PF0 > PF1 > PF2 > PF3 > PM2 > PM3 > BAK
-            if has_pm01 { pm01_color }
+            if has_pm01 { pm01_resolved }
             else if has_pf { pf_index }
             else if has_pm23 { pm23_color }
             else { 0 }
@@ -563,14 +572,14 @@ impl Gtia {
             // $04: PF0/PF1 in front, then all PM, then PF2/PF3 behind
             // PF0 > PF1 > PM0 > PM1 > PM2 > PM3 > PF2 > PF3 > BAK
             if has_pf01 { pf_index }
-            else if has_pm01 { pm01_color }
+            else if has_pm01 { pm01_resolved }
             else if has_pm23 { pm23_color }
             else { pf_index } // PF2/PF3 or BAK
         } else {
             // $08: All PF in front of all PM
             // PF0 > PF1 > PF2 > PF3 > PM0 > PM1 > PM2 > PM3 > BAK
             if has_pf { pf_index }
-            else if has_pm01 { pm01_color }
+            else if has_pm01 { pm01_resolved }
             else if has_pm23 { pm23_color }
             else { 0 }
         }
