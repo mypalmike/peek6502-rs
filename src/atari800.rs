@@ -586,6 +586,7 @@ impl Atari800 {
                 (current_scanline - 8) as usize,
                 &self.antic.scanline_buffer,
                 self.antic.get_current_mode(),
+                self.antic.get_dmactl(),
             );
         }
 
@@ -749,7 +750,7 @@ impl Atari800 {
                 self.gtia.apply_pm_dma(&self.antic.pm_data, scanline);
             }
             // Render the scanline
-            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode());
+            self.gtia.render_scanline(scanline, &self.antic.scanline_buffer, self.antic.get_current_mode(), self.antic.get_dmactl());
         }
     }
 
@@ -1044,7 +1045,7 @@ impl Atari800 {
         // Store status in DSTATS
         self.memory.write_ram(dcb::DSTATS, self.cpu.y);
 
-        // Clear A, set carry (like reference)
+        // Clear A, set carry
         self.cpu.a = 0;
         self.cpu.c = true;
 

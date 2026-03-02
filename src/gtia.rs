@@ -353,9 +353,13 @@ impl Gtia {
         let players_enabled = (self.gractl & 0b10) != 0;
         let missiles_enabled = (self.gractl & 0b01) != 0;
 
-        // PM coordinate offset: HPOS 48 = left edge of normal playfield = screen pixel 0
+        // PM coordinate offset: HPOS 32 = left edge of wide playfield = pm_scanline[0]
         // Each color clock = 2 hi-res pixels
-        const PM_HPOS_OFFSET: i32 = 48;
+        // For compositing, pm_scanline[overscan_left + x] aligns with antic_pixels[x]
+        // Wide (overscan_left=0): HPOS 32 = pm_scanline[0] = antic_pixels[0]
+        // Normal (overscan_left=32): HPOS 48 = pm_scanline[32] = antic_pixels[0]
+        // Narrow (overscan_left=64): HPOS 64 = pm_scanline[64] = antic_pixels[0]
+        const PM_HPOS_OFFSET: i32 = 32;
 
         // Render players (if enabled)
         if players_enabled {
@@ -445,17 +449,26 @@ impl Gtia {
     /// Colorize an ANTIC scanline and write to framebuffer
     /// Called once per scanline during frame rendering
     /// antic_mode: current ANTIC display mode (needed for GTIA mode 9/10/11 detection)
+    /// dmactl: ANTIC DMACTL register (bits 1-0 = playfield width: 01=narrow, 10=normal, 11=wide)
     /// Note: PM DMA data should be applied to registers via apply_pm_dma() before calling this
-    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8) {
+    pub fn render_scanline(&mut self, scanline_y: usize, antic_pixels: &[u8; 384], antic_mode: u8, dmactl: u8) {
         let gtia_mode = (self.prior >> 6) & 0x03;
+
+        // Determine playfield width from DMACTL bits 1-0
+        let (overscan_left, render_width) = match dmactl & 0x03 {
+            0x03 => (0usize, 384usize),   // Wide: 48 bytes → 384 pixels, no border
+            0x01 => (64usize, 256usize),  // Narrow: 32 bytes → 256 pixels
+            _    => (OVERSCAN_LEFT, 320usize), // Normal (0x02) or default: 40 bytes → 320 pixels
+        };
 
         // Generate PM graphics for this scanline (reads from GRAFP/GRAFM registers)
         self.generate_pm_scanline();
 
         // GTIA modes 9/10/11: reinterpret ANTIC mode F data
         if gtia_mode != 0 && antic_mode == 0x0F {
-            // Group every 4 ANTIC pixels into one 4-bit value → 80 wide pixels
-            for group in 0..80 {
+            // Group every 4 ANTIC pixels into one 4-bit value
+            let group_count = render_width / 4;
+            for group in 0..group_count {
                 let base = group * 4;
                 let nybble = ((antic_pixels[base] & 1) << 3)
                     | ((antic_pixels[base + 1] & 1) << 2)
@@ -492,21 +505,19 @@ impl Gtia {
                 // Each logical pixel is 4 color clocks wide
                 for dx in 0..4 {
                     let x = group * 4 + dx;
-                    if x < 320 {
-                        self.framebuffer.set_pixel(OVERSCAN_LEFT + x, scanline_y, r, g, b);
-                    }
+                    self.framebuffer.set_pixel(overscan_left + x, scanline_y, r, g, b);
                 }
             }
         } else {
             // Standard color index mapping with PM compositing
-            for x in 0..320 {
+            for x in 0..render_width {
                 let pf_index = antic_pixels[x];
-                let pm_bits = self.pm_scanline[x];
+                let pm_bits = self.pm_scanline[overscan_left + x];
 
                 // Composite PM over playfield using priority
                 let final_index = self.composite_pixel(pf_index, pm_bits);
                 let (r, g, b) = self.get_color_for_index(final_index);
-                self.framebuffer.set_pixel(OVERSCAN_LEFT + x, scanline_y, r, g, b);
+                self.framebuffer.set_pixel(overscan_left + x, scanline_y, r, g, b);
 
                 // Update collision registers
                 self.update_collisions(pm_bits, pf_index);

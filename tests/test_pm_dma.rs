@@ -42,7 +42,7 @@ fn test_pm_dma_single_line_mode() {
     // Apply PM DMA data to registers and render the scanline
     let scanline = [0u8; 384];
     gtia.apply_pm_dma(&antic.pm_data, 100);
-    gtia.render_scanline(100, &scanline, 0x02);
+    gtia.render_scanline(100, &scanline, 0x02, 0x22);
 
     // Check that player was rendered
     // HPOS=50 -> screen_x = (50-48)*2 = 4, framebuffer_x = 32 + 4 = 36
@@ -87,7 +87,7 @@ fn test_pm_dma_double_line_mode() {
     // Apply PM DMA data to registers and render scanline
     let scanline = [0u8; 384];
     gtia.apply_pm_dma(&antic.pm_data, 100);
-    gtia.render_scanline(100, &scanline, 0x02);
+    gtia.render_scanline(100, &scanline, 0x02, 0x22);
 
     // Check rendering
     // HPOS=50 -> screen_x = (50-48)*2 = 4, framebuffer_x = 32 + 4 = 36
@@ -132,7 +132,7 @@ fn test_pm_dma_missiles() {
     // Apply PM DMA data to registers and render scanline
     let scanline = [0u8; 384];
     gtia.apply_pm_dma(&antic.pm_data, 100);
-    gtia.render_scanline(100, &scanline, 0x02);
+    gtia.render_scanline(100, &scanline, 0x02, 0x22);
 
     // Check rendering
     // HPOS=60 -> screen_x = (60-48)*2 = 24, framebuffer_x = 32 + 24 = 56

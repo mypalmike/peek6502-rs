@@ -56,6 +56,9 @@ pub struct Antic {
     // Scroll bits from current display list instruction
     has_hsc: bool,  // HSC bit (bit 4) - horizontal fine scroll enabled
     has_vsc: bool,  // VSC bit (bit 5) - vertical fine scroll enabled (future use)
+
+    // JVB (Jump with Vertical Blank) has been executed — stop display list until next frame
+    frame_done: bool,
 }
 
 impl Antic {
@@ -90,6 +93,7 @@ impl Antic {
             has_dli: false,
             has_hsc: false,
             has_vsc: false,
+            frame_done: false,
         }
     }
 
@@ -283,6 +287,7 @@ impl Antic {
         self.dlist_index = self.dlist_ptr;
         self.lines_remaining = 0;
         self.mode_line = 0;
+        self.frame_done = false;
     }
 
     /// Check if ANTIC is asserting the NMI line
@@ -356,6 +361,11 @@ impl Antic {
         // Clear scanline buffer to background
         self.scanline_buffer.fill(0);
 
+        // JVB was executed — display list ended, output blank until next frame
+        if self.frame_done {
+            return;
+        }
+
         // If we need to fetch a new display list instruction
         if self.lines_remaining == 0 {
             self.fetch_display_list_instruction(bus);
@@ -363,19 +373,20 @@ impl Antic {
 
         // Generate scanline data based on current mode
         let hsc_extra = self.hsc_extra_bytes();
+        let base_bytes = self.playfield_bytes(self.current_mode);
         match self.current_mode {
             0x00 => {} // Blank line - already filled with 0
             0x02 | 0x03 => self.render_text_hires(bus),
             0x04 | 0x05 => self.render_text_multicolor(bus),
             0x06 | 0x07 => self.render_text_wide(bus),
-            0x08 => self.render_bitmap_1bpp(bus, 40 + hsc_extra, 1, 2, 0),
-            0x09 => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 4, 1, 0),
-            0x0A => self.render_bitmap_2bpp(bus, 20 + hsc_extra, 4),
-            0x0B => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 2, 2, 0),
-            0x0C => self.render_bitmap_1bpp(bus, 20 + hsc_extra, 2, 2, 0),
-            0x0D => self.render_bitmap_2bpp(bus, 40 + hsc_extra, 2),
-            0x0E => self.render_bitmap_2bpp(bus, 40 + hsc_extra, 2),
-            0x0F => self.render_bitmap_1bpp(bus, 40 + hsc_extra, 1, 2, 0),
+            0x08 => self.render_bitmap_1bpp(bus, base_bytes + hsc_extra, 1, 2, 0),
+            0x09 => self.render_bitmap_1bpp(bus, base_bytes + hsc_extra, 4, 1, 0),
+            0x0A => self.render_bitmap_2bpp(bus, base_bytes + hsc_extra, 4),
+            0x0B => self.render_bitmap_1bpp(bus, base_bytes + hsc_extra, 2, 2, 0),
+            0x0C => self.render_bitmap_1bpp(bus, base_bytes + hsc_extra, 2, 2, 0),
+            0x0D => self.render_bitmap_2bpp(bus, base_bytes + hsc_extra, 2),
+            0x0E => self.render_bitmap_2bpp(bus, base_bytes + hsc_extra, 2),
+            0x0F => self.render_bitmap_1bpp(bus, base_bytes + hsc_extra, 1, 2, 0),
             _ => {}
         }
 
@@ -384,7 +395,8 @@ impl Antic {
 
         // Move to next line and advance screen pointer on last scanline of row
         if self.lines_remaining > 0 {
-            let (scanlines, bytes_per_row) = Self::mode_info(self.current_mode);
+            let (scanlines, _) = Self::mode_info(self.current_mode);
+            let bytes_per_row = self.playfield_bytes(self.current_mode);
             let hsc_extra = self.hsc_extra_bytes();
             if self.mode_line == scanlines - 1 && self.current_mode >= 0x02 {
                 self.screen_ptr = self.screen_ptr.wrapping_add(bytes_per_row + hsc_extra);
@@ -417,15 +429,24 @@ impl Antic {
         self.has_hsc = (instruction & 0x10) != 0 && mode >= 0x02;
         self.has_vsc = (instruction & 0x20) != 0 && mode >= 0x02;
 
-        // Check for JVB (Jump with Vertical Blank) instruction
+        // Check for jump instructions (mode 0x01)
         if mode == 0x01 {
-            // JVB - jump to new display list address
             let new_addr_lo = bus.read(self.dlist_index);
             let new_addr_hi = bus.read(self.dlist_index + 1);
-            self.dlist_index = ((new_addr_hi as u16) << 8) | (new_addr_lo as u16);
+            let new_addr = ((new_addr_hi as u16) << 8) | (new_addr_lo as u16);
 
-            // Re-fetch instruction at new location
-            self.fetch_display_list_instruction(bus);
+            if (instruction & 0x40) != 0 {
+                // JMP (bit 6 set): jump to address and continue processing same frame
+                self.dlist_index = new_addr;
+                self.fetch_display_list_instruction(bus);
+            } else {
+                // JVB (bit 6 clear): end of display list — store address for next frame,
+                // stop processing until VBlank.
+                self.dlist_ptr = new_addr;
+                self.frame_done = true;
+                self.current_mode = 0x00;
+                self.lines_remaining = 1;
+            }
             return;
         }
 
@@ -456,16 +477,35 @@ impl Antic {
         };
     }
 
+    /// Returns the playfield byte width for the current mode based on DMACTL bits 1-0.
+    /// DMACTL bits 1-0: 00=disabled, 01=narrow, 10=normal, 11=wide
+    /// For 40-byte base modes: narrow=32, normal=40, wide=48
+    /// For 20-byte base modes: narrow=16, normal=20, wide=24
+    fn playfield_bytes(&self, mode: u8) -> u16 {
+        let (_scanlines, base_bytes) = Self::mode_info(mode);
+        let width_bits = self.dmactl & 0x03;
+        match (base_bytes, width_bits) {
+            (40, 0x01) => 32,
+            (40, 0x02) => 40,
+            (40, 0x03) => 48,
+            (20, 0x01) => 16,
+            (20, 0x02) => 20,
+            (20, 0x03) => 24,
+            _ => base_bytes,  // disabled (00) or unknown: return base
+        }
+    }
+
     /// Returns extra bytes to fetch when HSC (horizontal scroll) is enabled.
     /// When scrolling, ANTIC fetches one width class wider than normal.
     fn hsc_extra_bytes(&self) -> u16 {
         if !self.has_hsc {
             return 0;
         }
-        let (_scanlines, bytes_per_row) = Self::mode_info(self.current_mode);
-        match bytes_per_row {
-            40 => 8,  // Normal → wide: fetch 48 bytes
-            20 => 4,  // Narrow → normal: fetch 24 bytes
+        let (_scanlines, base_bytes) = Self::mode_info(self.current_mode);
+        let current_bytes = self.playfield_bytes(self.current_mode);
+        match base_bytes {
+            40 => if current_bytes >= 48 { 0 } else { 8 },  // Promote one class, cap at wide
+            20 => if current_bytes >= 24 { 0 } else { 4 },
             _ => 0,
         }
     }
@@ -500,8 +540,9 @@ impl Antic {
     fn render_text_hires(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
         let extra = self.hsc_extra_bytes();
+        let base = self.playfield_bytes(self.current_mode);
 
-        for char_col in 0u16..(40 + extra) {
+        for char_col in 0u16..(base + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
@@ -544,6 +585,7 @@ impl Antic {
     fn render_text_multicolor(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
         let extra = self.hsc_extra_bytes();
+        let base = self.playfield_bytes(self.current_mode);
         // Mode 5 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
         // Mode 4 (8 scanlines/row) = single-height
         let font_row = if self.current_mode == 0x05 {
@@ -552,7 +594,7 @@ impl Antic {
             self.mode_line as u16
         };
 
-        for char_col in 0u16..(40 + extra) {
+        for char_col in 0u16..(base + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let inverse = (char_code & 0x80) != 0;
             let font_index = (char_code & 0x7F) as u16;
@@ -585,6 +627,7 @@ impl Antic {
     fn render_text_wide(&mut self, bus: &dyn ReadBus) {
         let char_base = self.char_base();
         let extra = self.hsc_extra_bytes();
+        let base = self.playfield_bytes(self.current_mode);
         // Mode 7 (16 scanlines/row) = double-height, each font row shows on 2 scanlines
         // Mode 6 (8 scanlines/row) = single-height
         let font_row = if self.current_mode == 0x07 {
@@ -593,7 +636,7 @@ impl Antic {
             self.mode_line as u16
         };
 
-        for char_col in 0u16..(20 + extra) {
+        for char_col in 0u16..(base + extra) {
             let char_code = bus.read(self.screen_ptr + char_col);
             let color_select = (char_code >> 6) & 0x03;
             let font_index = (char_code & 0x3F) as u16;

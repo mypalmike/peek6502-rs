@@ -1,7 +1,6 @@
 /// POKEY audio synthesis engine.
 ///
 /// Implements polynomial counter-based sound generation matching real hardware.
-/// Based on the Ron Fries / Atari800 pokeysnd.c reference implementation.
 ///
 /// Data flow:
 ///   CPU writes $D200-$D208 -> PokeyAudio::update_register() (recalcs divider reload values)

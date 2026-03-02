@@ -248,7 +248,7 @@ pub fn siov_patch_handler(ctx: &mut dyn PatchContext, env: &mut dyn PatchEnv) ->
     let aux2 = ctx.read_byte(dcb::DAUX2);
     let sector = (aux2 as u16) << 8 | (aux1 as u16);
 
-    // Calculate unit number like the reference implementation
+    // Calculate unit number
     // XL OS: LDA $0300 ADC $0301 ADC #$FF STA 023A
     let _unit_calc = device.wrapping_add(unit).wrapping_add(0xFF);
 
@@ -305,7 +305,7 @@ pub fn siov_patch_handler(ctx: &mut dyn PatchContext, env: &mut dyn PatchEnv) ->
     // Store status in DSTATS
     ctx.write_byte(dcb::DSTATS, ctx.get_y());
 
-    // Clear A, set carry (like reference)
+    // Clear A, set carry
     ctx.set_a(0);
     ctx.set_c(true);
 

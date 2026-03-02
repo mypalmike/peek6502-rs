@@ -62,7 +62,7 @@ fn test_hitclr_clears_collisions() {
     }
 
     // Render the scanline to trigger collisions
-    gtia.render_scanline(100, &scanline, 0x02);
+    gtia.render_scanline(100, &scanline, 0x02, 0x22);
 
     // Check that collision was detected
     let p0pf = gtia.read_register(0xD004);
@@ -109,7 +109,7 @@ fn test_player_to_playfield_collision() {
     }
 
     // Render the scanline
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Check P0PF collision register
     let p0pf = gtia.read_register(0xD004);
@@ -134,7 +134,7 @@ fn test_player_to_player_collision() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Check P0PL and P1PL collision registers
     let p0pl = gtia.read_register(0xD00C);
@@ -163,7 +163,7 @@ fn test_missile_rendering() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Verify framebuffer has missile pixels
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
@@ -187,7 +187,7 @@ fn test_gractl_disable_players() {
 
     // Render a scanline
     let scanline = [0u8; 384];
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Get background color for comparison
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
@@ -196,7 +196,7 @@ fn test_gractl_disable_players() {
     // Now enable players and render again
     gtia.write_register(0xD01D, 0b10);
     gtia.clear_framebuffer();
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     let (p_r, p_g, p_b) = gtia.framebuffer.get_pixel(136, 50);
 
@@ -227,7 +227,7 @@ fn test_priority_mode_0() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // At position 104 (where both player and playfield exist),
     // player should be visible (mode 0 = PM in front)
@@ -260,7 +260,7 @@ fn test_priority_mode_3() {
         scanline[i] = 1;  // Playfield 0
     }
 
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // At position 100 (where both player and playfield exist),
     // playfield should be visible (mode 3 = PF in front)
@@ -297,17 +297,17 @@ fn test_vdelay_player() {
     // Even scanline (0) with VDELAY: DMA write to GRAFP0 should be SKIPPED
     // GRAFP0 remains 0, so player should be dark
     gtia.apply_pm_dma(&pm_dma, 0);
-    gtia.render_scanline(0, &scanline, 0x02);
+    gtia.render_scanline(0, &scanline, 0x02, 0x22);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
     // Odd scanline (1): DMA write to GRAFP0 should succeed (0xFF)
     gtia.apply_pm_dma(&pm_dma, 1);
-    gtia.render_scanline(1, &scanline, 0x02);
+    gtia.render_scanline(1, &scanline, 0x02, 0x22);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
     // Even scanline (2) with VDELAY: DMA write skipped, GRAFP0 retains 0xFF from scanline 1
     gtia.apply_pm_dma(&pm_dma, 2);
-    gtia.render_scanline(2, &scanline, 0x02);
+    gtia.render_scanline(2, &scanline, 0x02, 0x22);
     let (r2, g2, b2) = gtia.framebuffer.get_pixel(136, 2);
 
     // Even scanline 0: GRAFP0 was 0 (DMA skipped), so should be dark
@@ -344,10 +344,10 @@ fn test_vdelay_disabled() {
     // HPOS=100 -> screen_x = (100-48)*2 = 104, framebuffer_x = 32 + 104 = 136
 
     // Render even and odd scanlines
-    gtia.render_scanline(0, &scanline, 0x02);
+    gtia.render_scanline(0, &scanline, 0x02, 0x22);
     let (r0, g0, b0) = gtia.framebuffer.get_pixel(136, 0);
 
-    gtia.render_scanline(1, &scanline, 0x02);
+    gtia.render_scanline(1, &scanline, 0x02, 0x22);
     let (r1, g1, b1) = gtia.framebuffer.get_pixel(136, 1);
 
     // Both should be bright (no delay, always use current value)

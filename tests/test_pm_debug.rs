@@ -19,7 +19,7 @@ fn debug_player_rendering() {
     let scanline = [0u8; 384];
 
     // Render it
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Check the framebuffer to see what was actually rendered
     println!("\nPixels around position 100:");
@@ -50,7 +50,7 @@ fn debug_player_2x_rendering() {
     let scanline = [0u8; 384];
 
     // Render it
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Check the framebuffer to see what was actually rendered
     println!("\nPixels around position 100 (2x width, should be 16 pixels):");
@@ -81,7 +81,7 @@ fn debug_player_pattern_rendering() {
     let scanline = [0u8; 384];
 
     // Render it
-    gtia.render_scanline(50, &scanline, 0x02);
+    gtia.render_scanline(50, &scanline, 0x02, 0x22);
 
     // Check the framebuffer
     println!("\nPixels with pattern 0b10101010 (should alternate on/off):");

@@ -114,10 +114,8 @@ impl CommandFrame {
     }
 
     fn validate_checksum(&self) -> bool {
-        // Mirror atari800-master: don't actually validate checksum
-        // The reference implementation accepts all command frames without validation
         // Checksum is calculated on all 4 command bytes (device, command, aux1, aux2)
-        // but validation is disabled to match hardware behavior
+        // but validation is disabled for now
         true
     }
 }
