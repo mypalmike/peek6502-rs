@@ -5,7 +5,7 @@
 
 use atari800_rs::atari800::Atari800;
 use atari800_rs::atrdisk::AtrDisk;
-use atari800_rs::bus::Bus;
+
 use atari800_rs::sio::SioDevice;
 
 #[test]
@@ -23,25 +23,25 @@ fn test_os_cannot_read_ack_byte() {
 
     // Simulate OS sending Status command
     println!("OS: Asserting command line...");
-    atari.write(0xD303, 0x08);  // Assert command line
+    atari.bus_write(0xD303, 0x08);  // Assert command line
     atari.tick_sio();
 
     println!("OS: Sending command frame: 31 53 00 00 84");
     let command = [0x31u8, 0x53, 0x00, 0x00, 0x84];
     for &byte in &command {
-        atari.write(0xD20D, byte);  // Write to SEROUT
+        atari.bus_write(0xD20D, byte);  // Write to SEROUT
         atari.tick_sio();
     }
 
     println!("OS: Deasserting command line...");
-    atari.write(0xD303, 0x30);  // Deassert command line
+    atari.bus_write(0xD303, 0x30);  // Deassert command line
     atari.tick_sio();
 
     println!("OS: Processing command...");
     atari.tick_sio();
 
     println!("OS: Reading ACK from SERIN...");
-    let ack = atari.read(0xD20D);
+    let ack = atari.bus_read(0xD20D);
 
     println!("\n!!! PROBLEM DETECTED !!!");
     println!("Expected: 0x41 (ACK)");
@@ -192,22 +192,22 @@ fn test_full_boot_after_fix() {
 
     // Send Status command
     println!("1. Sending Status command");
-    atari.write(0xD303, 0x08);  // Assert command line
+    atari.bus_write(0xD303, 0x08);  // Assert command line
     atari.tick_sio();
 
     let cmd = [0x31u8, 0x53, 0x00, 0x00, 0x84];
     for &byte in &cmd {
-        atari.write(0xD20D, byte);
+        atari.bus_write(0xD20D, byte);
         atari.tick_sio();
     }
 
-    atari.write(0xD303, 0x30);  // Deassert
+    atari.bus_write(0xD303, 0x30);  // Deassert
     atari.tick_sio();
 
     // Read ACK
     let mut ack = 0u8;
     for _ in 0..100 {
-        ack = atari.read(0xD20D);
+        ack = atari.bus_read(0xD20D);
         if ack == 0x41 {
             break;
         }
@@ -219,7 +219,7 @@ fn test_full_boot_after_fix() {
     // Read Complete
     let mut complete = 0u8;
     for _ in 0..100 {
-        complete = atari.read(0xD20D);
+        complete = atari.bus_read(0xD20D);
         if complete == 0x43 {
             break;
         }
@@ -234,7 +234,7 @@ fn test_full_boot_after_fix() {
         for _ in 0..100 {
             atari.tick_sio();
         }
-        status.push(atari.read(0xD20D));
+        status.push(atari.bus_read(0xD20D));
     }
     assert_eq!(status.len(), 4);
     println!("   ✓ Read status bytes: {:02X?}", status);

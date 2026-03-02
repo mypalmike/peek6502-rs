@@ -2,28 +2,16 @@ use atari800_rs::bus::Bus;
 use atari800_rs::cpu::Cpu;
 use atari800_rs::mem::Mem;
 
-// Test bus with controllable interrupt lines
+// Test bus with simple memory (interrupt lines are now on the CPU)
 struct InterruptTestBus {
     mem: Mem,
-    irq_state: bool,
-    nmi_state: bool,
 }
 
 impl InterruptTestBus {
     fn new() -> InterruptTestBus {
         InterruptTestBus {
             mem: Mem::new(0, false),  // All RAM for testing
-            irq_state: false,
-            nmi_state: false,
         }
-    }
-
-    fn set_irq(&mut self, asserted: bool) {
-        self.irq_state = asserted;
-    }
-
-    fn set_nmi(&mut self, asserted: bool) {
-        self.nmi_state = asserted;
     }
 }
 
@@ -34,14 +22,6 @@ impl Bus for InterruptTestBus {
 
     fn write(&mut self, addr: u16, val: u8) {
         self.mem.set_byte(addr, val);
-    }
-
-    fn nmi_asserted(&self) -> bool {
-        self.nmi_state
-    }
-
-    fn irq_asserted(&self) -> bool {
-        self.irq_state
     }
 }
 
@@ -144,7 +124,7 @@ fn test_irq_basic() {
     execute_instruction(&mut cpu, &mut bus);
 
     // Assert IRQ line
-    bus.set_irq(true);
+    cpu.set_irq_line(true);
 
     // Execute next instruction - should take IRQ before JMP
     execute_instruction(&mut cpu, &mut bus);
@@ -161,7 +141,7 @@ fn test_irq_basic() {
     assert_eq!(bus.read(0x0200), 0x42, "Handler should have written $42");
 
     // Clear IRQ and return
-    bus.set_irq(false);
+    cpu.set_irq_line(false);
     execute_instruction(&mut cpu, &mut bus);  // RTI
 
     // Should be back at JMP instruction
@@ -188,7 +168,7 @@ fn test_irq_masked() {
     cpu.i = true;  // Disable interrupts
 
     // Assert IRQ
-    bus.set_irq(true);
+    cpu.set_irq_line(true);
 
     // Execute NOPs - IRQ should be ignored
     execute_instruction(&mut cpu, &mut bus);
@@ -220,7 +200,7 @@ fn test_irq_timing() {
     cpu.tick(&mut bus);
 
     // Assert IRQ during instruction execution (middle of LDA)
-    bus.set_irq(true);
+    cpu.set_irq_line(true);
 
     // Finish the LDA instruction
     while cpu.cycles_remaining > 0 {
@@ -262,11 +242,11 @@ fn test_nmi_edge_detection() {
     cpu.s = 0xFF;
 
     // NMI line starts low
-    bus.set_nmi(false);
+    cpu.set_nmi_line(false);
     execute_instruction(&mut cpu, &mut bus);  // NOP
 
     // Rising edge: false -> true
-    bus.set_nmi(true);
+    cpu.set_nmi_line(true);
     execute_instruction(&mut cpu, &mut bus);  // Should take NMI
 
     assert_eq!(cpu.pc, 0x0900, "NMI should trigger on rising edge");
@@ -308,9 +288,9 @@ fn test_nmi_repeated() {
     bus.write(0x0200, 0);  // Initialize counter
 
     // First NMI: rising edge
-    bus.set_nmi(false);
+    cpu.set_nmi_line(false);
     execute_instruction(&mut cpu, &mut bus);  // NOP at 0x0800
-    bus.set_nmi(true);
+    cpu.set_nmi_line(true);
     execute_instruction(&mut cpu, &mut bus);  // Take NMI
 
     assert_eq!(cpu.pc, 0x0900);
@@ -323,9 +303,9 @@ fn test_nmi_repeated() {
     assert_eq!(cpu.pc, 0x0802, "NMI should not retrigger while high");
 
     // New rising edge required
-    bus.set_nmi(false);
+    cpu.set_nmi_line(false);
     execute_instruction(&mut cpu, &mut bus);  // NOP at 0x0802
-    bus.set_nmi(true);
+    cpu.set_nmi_line(true);
     execute_instruction(&mut cpu, &mut bus);  // Should take NMI again
 
     assert_eq!(cpu.pc, 0x0900);
@@ -358,11 +338,11 @@ fn test_nmi_not_masked() {
     cpu.s = 0xFF;
     cpu.i = true;  // IRQ disabled - should not affect NMI
 
-    bus.set_nmi(false);
+    cpu.set_nmi_line(false);
     execute_instruction(&mut cpu, &mut bus);  // NOP
 
     // Trigger NMI
-    bus.set_nmi(true);
+    cpu.set_nmi_line(true);
     execute_instruction(&mut cpu, &mut bus);
 
     assert_eq!(cpu.pc, 0x0900, "NMI should trigger even with I=1");
@@ -448,7 +428,7 @@ fn test_interrupt_stack_format() {
     cpu.c = true;   // bit 0
 
     // Trigger IRQ
-    bus.set_irq(true);
+    cpu.set_irq_line(true);
     execute_instruction(&mut cpu, &mut bus);
 
     // Check stack contents

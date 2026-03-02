@@ -168,12 +168,4 @@ impl Bus for FunctionalTest {
     fn write(&mut self, addr: u16, val: u8) {
         self.mem.set_byte(addr, val);
     }
-
-    fn nmi_asserted(&self) -> bool {
-        false  // No NMI support in functional tests
-    }
-
-    fn irq_asserted(&self) -> bool {
-        false  // No IRQ support in functional tests
-    }
 }

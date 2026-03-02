@@ -230,8 +230,6 @@ struct SioCommandFrame {
 /// 3. Deassert command line
 /// 4. Read response from POKEY SERIN
 fn simulate_sio_command(atari: &mut Atari800, device_id: u8, cmd: u8, aux1: u8, aux2: u8) -> SioCommandFrame {
-    use atari800_rs::bus::Bus;
-
     let mut result = SioCommandFrame {
         ack_received: false,
         complete_received: false,
@@ -246,13 +244,13 @@ fn simulate_sio_command(atari: &mut Atari800, device_id: u8, cmd: u8, aux1: u8, 
 
     // Step 1: Assert command line (PIA CB2 high = command mode)
     // PBCTL mode 1 = output high
-    atari.write(0xD303, 0x08);  // Set PBCTL to mode 1 (bits 5-3 = 001)
+    atari.bus_write(0xD303, 0x08);  // Set PBCTL to mode 1 (bits 5-3 = 001)
     atari.tick_sio();  // Let SIO detect command line rising edge
 
     // Step 2: Send 5-byte command frame via POKEY SEROUT
     let command_bytes = [device_id, cmd, aux1, aux2, checksum];
     for &byte in &command_bytes {
-        atari.write(0xD20D, byte);  // Write to POKEY SEROUT
+        atari.bus_write(0xD20D, byte);  // Write to POKEY SEROUT
         // SEROUT writes are automatically forwarded to SIO in Bus::write
         atari.tick_sio();  // Tick after each byte
     }
@@ -260,7 +258,7 @@ fn simulate_sio_command(atari: &mut Atari800, device_id: u8, cmd: u8, aux1: u8, 
 
     // Step 3: Deassert command line (PIA CB2 low = ready for response)
     // PBCTL mode 6 = output low
-    atari.write(0xD303, 0x30);  // Set PBCTL to mode 6 (bits 5-3 = 110)
+    atari.bus_write(0xD303, 0x30);  // Set PBCTL to mode 6 (bits 5-3 = 110)
     println!("  Command line deasserted");
 
     // Step 4: Process the command
@@ -274,7 +272,7 @@ fn simulate_sio_command(atari: &mut Atari800, device_id: u8, cmd: u8, aux1: u8, 
     // The OS polls SERIN or waits for IRQ for each byte
 
     // Read ACK byte (should be 0x41)
-    let ack = atari.read(0xD20D);
+    let ack = atari.bus_read(0xD20D);
     if ack == 0x41 {
         result.ack_received = true;
         println!("  Received ACK: {:02X}", ack);

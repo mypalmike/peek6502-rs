@@ -3,8 +3,13 @@
 // Each machine type has different memory layouts, ROM sizes, and banking schemes.
 // This module centralizes those differences into declarative configurations.
 
-use crate::banking::BankingScheme;
 use crate::rom_scanner::RomDatabase;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BankingScheme {
+    None,
+    Atari130XE,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MachineType {
@@ -79,6 +84,20 @@ impl MachineConfig {
             basic_rom_path,
             basic_rom_size: 8 * 1024,  // 8KB
             banking_scheme: BankingScheme::None,  // No RAM banking on 800XL
+        }
+    }
+
+    /// Minimal configuration for render tests (no ROMs)
+    pub fn minimal() -> Self {
+        MachineConfig {
+            machine_type: MachineType::Atari800,
+            ram_size: 64 * 1024,
+            os_rom_path: None,
+            os_rom_start: 0xD800,
+            os_rom_size: 0,
+            basic_rom_path: None,
+            basic_rom_size: 0,
+            banking_scheme: BankingScheme::None,
         }
     }
 

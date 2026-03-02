@@ -39,7 +39,8 @@ pub struct Cpu {
     // Debugging/tracing
     pub trace_remaining: u32,       // Number of instructions to trace (0 = no trace)
 
-    // NMI edge detection (NMI is edge-triggered, not level-triggered like IRQ)
+    // Interrupt lines (set externally via set_nmi_line / set_irq_line)
+    irq_line: bool,             // Current IRQ line level (level-triggered)
     nmi_prev: bool,             // Previous NMI line state (for edge detection)
     nmi_pending: bool,          // Latched NMI waiting to be serviced
 }
@@ -65,6 +66,7 @@ impl Cpu {
             cycles_remaining: 0,
             current_opcode: 0,
             trace_remaining: 0,
+            irq_line: false,
             nmi_prev: false,
             nmi_pending: false,
         };
@@ -487,19 +489,21 @@ impl Cpu {
         );
     }
 
+    /// Set the NMI line state. Edge detection (false→true triggers NMI) is handled internally.
+    pub fn set_nmi_line(&mut self, asserted: bool) {
+        if !self.nmi_prev && asserted {
+            self.nmi_pending = true;
+        }
+        self.nmi_prev = asserted;
+    }
+
+    /// Set the IRQ line state. IRQ is level-triggered and checked each instruction boundary.
+    pub fn set_irq_line(&mut self, asserted: bool) {
+        self.irq_line = asserted;
+    }
+
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {
         if self.cycles_remaining == 0 {
-            // Sample NMI line and detect falling edge (edge-triggered interrupt)
-            // NMI is triggered by a 1→0 transition, not by level
-            let nmi_current = bus.nmi_asserted();
-
-            // Detect rising edge of nmi_asserted (false→true), which corresponds
-            // to the falling edge of the physical /NMI pin (active-low)
-            if !self.nmi_prev && nmi_current {
-                self.nmi_pending = true;  // Latch the NMI event
-            }
-            self.nmi_prev = nmi_current;
-
             // Service latched NMI (if any)
             if self.nmi_pending {
                 self.nmi_pending = false;  // Clear the latch
@@ -510,7 +514,7 @@ impl Cpu {
 
             // Check for IRQ at end of instruction (before starting next instruction)
             // IRQ is level-triggered (can be masked by the I flag)
-            if !self.i && bus.irq_asserted() {
+            if !self.i && self.irq_line {
                 self.irq(bus);
                 self.cycles_remaining = 6;  // 7 cycles total: 1 now + 6 remaining
                 return 1;

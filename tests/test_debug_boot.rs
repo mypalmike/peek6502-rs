@@ -5,7 +5,7 @@
 
 use atari800_rs::atari800::Atari800;
 use atari800_rs::atrdisk::AtrDisk;
-use atari800_rs::bus::Bus;
+
 
 #[test]
 fn test_debug_sio_boot_sequence() {
@@ -41,7 +41,7 @@ fn test_debug_sio_boot_sequence() {
 
     // Assert command line
     println!("[OS] Writing to PIA PBCTL ($D303) = $08 (assert command line)");
-    atari.write(0xD303, 0x08);
+    atari.bus_write(0xD303, 0x08);
     atari.tick_sio();
 
     // Send command frame: Device=$31, Command=$53 (Status), Aux1=$00, Aux2=$00
@@ -57,20 +57,20 @@ fn test_debug_sio_boot_sequence() {
             _ => "???",
         };
         println!("[OS]   Byte {}: ${:02X} ({})", i+1, byte, label);
-        atari.write(0xD20D, byte);  // Write to POKEY SEROUT
+        atari.bus_write(0xD20D, byte);  // Write to POKEY SEROUT
         atari.tick_sio();
     }
 
     // Deassert command line
     println!("[OS] Writing to PIA PBCTL ($D303) = $30 (deassert command line)");
-    atari.write(0xD303, 0x30);
+    atari.bus_write(0xD303, 0x30);
     atari.tick_sio();
 
     println!("\n[OS] Processing command...");
     atari.tick_sio();
 
     println!("\n[OS] Attempting to read ACK from POKEY SERIN ($D20D)...");
-    let ack = atari.read(0xD20D);
+    let ack = atari.bus_read(0xD20D);
     println!("[OS] Read from SERIN: ${:02X}", ack);
 
     if ack == 0x41 {
@@ -88,7 +88,7 @@ fn test_debug_sio_boot_sequence() {
     println!("╔═══ STEP 2: READ COMPLETE BYTE ═══╗\n");
 
     println!("[OS] Attempting to read Complete from SERIN...");
-    let complete = atari.read(0xD20D);
+    let complete = atari.bus_read(0xD20D);
     println!("[OS] Read from SERIN: ${:02X}", complete);
 
     if complete == 0x43 {

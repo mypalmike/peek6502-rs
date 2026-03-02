@@ -24,13 +24,6 @@ impl Bus for TestBus {
         self.mem.set_byte(addr, val);
     }
 
-    fn nmi_asserted(&self) -> bool {
-        false  // No NMI for tests
-    }
-
-    fn irq_asserted(&self) -> bool {
-        false  // No IRQ for tests
-    }
 }
 
 fn get_cpu_bus() -> (Cpu, TestBus) {

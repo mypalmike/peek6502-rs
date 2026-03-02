@@ -15,10 +15,7 @@ pub mod input;
 pub mod controller;
 pub mod keyboard_controller;
 pub mod sdl_controller;
-pub mod memory_region;
-pub mod memory_map;
-pub mod banking;  // RAM banking for 130XE extended memory
-pub mod rom_overlay;  // ROM overlays for 800XL/130XE
+pub mod page_table;
 pub mod machine_config;
 pub mod rom_scanner;
 pub mod sio;  // Serial I/O controller

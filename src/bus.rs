@@ -41,14 +41,4 @@ pub trait Bus {
         self.write(addr, lo);
         self.write(addr.wrapping_add(1), hi);
     }
-
-    /// Check if NMI (Non-Maskable Interrupt) line is asserted
-    /// NMI is edge-triggered - the CPU detects 1→0 transitions internally
-    /// This method just returns the current line state (no side effects)
-    fn nmi_asserted(&self) -> bool;
-
-    /// Check if IRQ (Interrupt Request) line is asserted
-    /// The 6502 checks this before each instruction (unless I flag is set)
-    /// The IRQ line is shared among multiple devices (POKEY, PIA, PBI)
-    fn irq_asserted(&self) -> bool;
 }
