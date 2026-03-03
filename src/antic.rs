@@ -510,15 +510,34 @@ impl Antic {
         }
     }
 
-    /// Apply HSCROL fine scroll offset by shifting scanline buffer left.
-    /// On real hardware, HSCROL=0 means maximum offset (4 chars into extra data),
-    /// and HSCROL=15 means minimum offset. Higher HSCROL shifts display RIGHT.
-    /// Each HSCROL unit = 1 color clock = 2 hi-res pixels in the buffer.
+    /// Apply HSCROL fine scroll offset.
+    ///
+    /// For non-wide modes (narrow/normal + HSC): ANTIC fetches one width class wider,
+    /// providing extra bytes as a left margin. The buffer is shifted LEFT to skip
+    /// the margin: HSCROL=0 skips the full margin, HSCROL=15 skips almost none.
+    /// Formula: left shift of (16 - hscrol) * 2 pixels.
+    ///
+    /// For wide mode (no extra bytes): there's no left margin. Instead, HSCROL
+    /// shifts content RIGHT within the existing 48-byte window.
+    /// HSCROL=0 = no shift (same as non-scroll). HSCROL=N shifts right by N CC.
+    /// Formula: right shift of hscrol * 2 pixels.
     fn apply_hscrol(&mut self) {
         if !self.has_hsc {
             return;
         }
-        // Invert: HSCROL=0 → max shift (32px), HSCROL=15 → min shift (2px)
+        let extra = self.hsc_extra_bytes();
+        if extra == 0 {
+            // Wide mode: shift content RIGHT by hscrol color clocks.
+            // As HSCROL increases, content shifts right (showing earlier data).
+            // Left edge fills with background, right edge data scrolls off.
+            let shift = (self.hscrol & 0x0F) as usize * 2;
+            if shift > 0 {
+                self.scanline_buffer.copy_within(..384 - shift, shift);
+                self.scanline_buffer[..shift].fill(0);
+            }
+            return;
+        }
+        // Non-wide: extra bytes provide left margin for scrolling
         let shift = (16 - (self.hscrol & 0x0F) as usize) * 2;
         self.scanline_buffer.copy_within(shift.., 0);
         let len = self.scanline_buffer.len();
