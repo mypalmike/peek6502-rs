@@ -39,6 +39,9 @@ pub struct Cpu {
     // Debugging/tracing
     pub trace_remaining: u32,       // Number of instructions to trace (0 = no trace)
 
+    // CPU halted state (HLT/JAM opcode executed)
+    pub halted: bool,
+
     // Interrupt lines (set externally via set_nmi_line / set_irq_line)
     irq_line: bool,             // Current IRQ line level (level-triggered)
     nmi_prev: bool,             // Previous NMI line state (for edge detection)
@@ -66,6 +69,7 @@ impl Cpu {
             cycles_remaining: 0,
             current_opcode: 0,
             trace_remaining: 0,
+            halted: false,
             irq_line: false,
             nmi_prev: false,
             nmi_pending: false,
@@ -503,6 +507,11 @@ impl Cpu {
     }
 
     pub fn tick(&mut self, bus: &mut dyn Bus) -> u8 {
+        // CPU is jammed — do nothing until reset
+        if self.halted {
+            return 1;
+        }
+
         if self.cycles_remaining == 0 {
             // Service latched NMI (if any)
             if self.nmi_pending {
@@ -566,7 +575,9 @@ impl Cpu {
     }
 
     pub fn unimpl(&mut self, _bus: &mut dyn Bus) {
-        panic!("Unimplemented instruction");
+        let opcode_pc = self.pc.wrapping_sub(1);
+        eprintln!("CPU: unimplemented opcode ${:02X} at PC=${:04X}", self.current_opcode, opcode_pc);
+        self.halted = true;
     }
 
     // Fetch from program counter
@@ -702,9 +713,11 @@ impl Cpu {
         self.ora(bus, val);
     }
 
-    // 0x02, unofficial
+    // 0x02, unofficial — CPU jams, stops executing until reset
     fn op_hlt(&mut self, _bus: &mut dyn Bus) {
-        panic!("cpu halt");
+        let opcode_pc = self.pc.wrapping_sub(1);
+        eprintln!("CPU: HLT/JAM opcode ${:02X} at PC=${:04X}", self.current_opcode, opcode_pc);
+        self.halted = true;
     }
 
     // 0x03, time 8, unofficial
